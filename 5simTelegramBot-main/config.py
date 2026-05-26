@@ -1,15 +1,25 @@
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file (if exists)
+# Falls back gracefully if .env is missing or dotenv is not installed
+try:
+    load_dotenv()
+except Exception:
+    pass
+
 # تنظیمات اصلی ربات
 BOT_CONFIG = {
-    'token': '7728660088:AAHW7p6ebM1m9Xpi9vTgPQDBaSOgOFPhaPM',
-    'admin_ids': [1457637832],  # آیدی عددی ادمین‌ها - عدد را جایگزین کردم
-    'webhook_url': 'https://clever-bluejay-charmed.ngrok-free.app',  # آدرس ngrok را اینجا قرار دهید
-    'website_url': 'https://clever-bluejay-charmed.ngrok-free.app'  # آدرس سایت شما
+    'token': os.getenv('BOT_TOKEN', '7728660088:AAHW7p6ebM1m9Xpi9vTgPQDBaSOgOFPhaPM'),
+    'admin_ids': [int(x.strip()) for x in os.getenv('ADMIN_IDS', '1457637832').split(',')],
+    'webhook_url': os.getenv('WEBHOOK_URL', 'https://clever-bluejay-charmed.ngrok-free.app'),
+    'website_url': os.getenv('WEBSITE_URL', 'https://clever-bluejay-charmed.ngrok-free.app')
 }
 
 # تنظیمات hero-sms.com (SMS-Activate Protocol)
 HEROSMS_CONFIG = {
-    'api_key': 'cb28fe1389Abce0053b2fb3bA48d6b4c',
-    'api_url': 'https://hero-sms.com/stubs/handler_api.php'
+    'api_key': os.getenv('HEROSMS_API_KEY', 'cb28fe1389Abce0053b2fb3bA48d6b4c'),
+    'api_url': os.getenv('HEROSMS_API_URL', 'https://hero-sms.com/stubs/handler_api.php')
 }
 
 # نگاشت أسماء الدول إلى معرفات رقمية (SMS-Activate standard)
@@ -46,18 +56,18 @@ SERVICE_CODE_MAP = {
 
 # تنظیمات API نرخ ارز
 CURRENCY_CONFIG = {
-    'navasan_api_key': 'free26Ln3Pt7qXlEydjJYJEKDcjEYKuS'
+    'navasan_api_key': os.getenv('NAVASAN_API_KEY', 'free26Ln3Pt7qXlEydjJYJEKDcjEYKuS')
 }
 
 # تنظیمات دیتابیس
 DB_CONFIG = {
-    'users_db': 'users.db',
-    'admin_db': 'admin.db'
+    'users_db': os.getenv('USERS_DB', 'users.db'),
+    'admin_db': os.getenv('ADMIN_DB', 'admin.db')
 }
 
 # اضافه کردن تنظیمات درگاه پرداخت
 PAYMENT_CONFIG = {
-    'zarinpal_merchant': '1344b5d4-0048-11e8-94db-005056a205be',  # مرچنت کد تست زرین‌پال
-    'sandbox_mode': True,  # True برای تست، False برای حالت اصلی
+    'zarinpal_merchant': os.getenv('ZARINPAL_MERCHANT', '1344b5d4-0048-11e8-94db-005056a205be'),
+    'sandbox_mode': os.getenv('ZARINPAL_SANDBOX', 'true').lower() == 'true',
     'callback_url': BOT_CONFIG['webhook_url'] + '/verify'  # آدرس برگشت از درگاه
-} 
+}

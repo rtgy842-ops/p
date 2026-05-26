@@ -1,5 +1,6 @@
 import sqlite3
 import logging
+from data.service_countries import get_all_service_countries
 
 class OperatorConfig:
     def __init__(self):
@@ -9,9 +10,6 @@ class OperatorConfig:
         try:
             conn = sqlite3.connect('admin.db')
             cursor = conn.cursor()
-            
-            # حذف جدول قبلی اگر وجود دارد
-            cursor.execute('DROP TABLE IF EXISTS operator_settings')
             
             # ایجاد جدول تنظیمات اپراتور با ساختار جدید
             cursor.execute('''
@@ -25,37 +23,8 @@ class OperatorConfig:
                 )
             ''')
             
-            # تنظیمات به‌روز شده
-            default_settings = [
-                # تلگرام
-                ('telegram', 'cyprus', 'virtual4', 'قبرس 🇨🇾'),
-                ('telegram', 'paraguay', 'virtual4', 'پاراگوئه 🇵🇾'),
-                ('telegram', 'maldives', 'virtual4', 'مالدیو 🇲🇻'),
-                ('telegram', 'suriname', 'virtual4', 'سورینام 🇸🇷'),
-                ('telegram', 'slovenia', 'virtual4', 'اسلوونی 🇸🇮'),
-                ('telegram', 'canada', 'virtual8', 'کانادا 🇨🇦'),
-                
-                # واتساپ
-                ('whatsapp', 'georgia', 'virtual4', 'گرجستان 🇬🇪'),
-                ('whatsapp', 'cameroon', 'virtual4', 'کامرون 🇨🇲'),
-                ('whatsapp', 'laos', 'virtual4', 'لائوس 🇱🇦'),
-                ('whatsapp', 'benin', 'virtual4', 'بنین 🇧🇯'),
-                ('whatsapp', 'dominican_republic', 'virtual4', 'جمهوری دومینیکن 🇩🇴'),
-                
-                # اینستاگرام
-                ('instagram', 'poland', 'virtual53', 'لهستان 🇵🇱'),
-                ('instagram', 'philippines', 'virtual38', 'فیلیپین 🇵🇭'),
-                ('instagram', 'netherlands', 'virtual52', 'هلند 🇳🇱'),
-                ('instagram', 'estonia', 'virtual38', 'استونی 🇪🇪'),
-                ('instagram', 'vietnam', 'virtual4', 'ویتنام 🇻🇳'),
-                
-                # گوگل
-                ('google', 'cambodia', 'virtual4', 'کامبوج 🇰🇭'),
-                ('google', 'philippines', 'virtual58', 'فیلیپین 🇵🇭'),
-                ('google', 'indonesia', 'virtual4', 'اندونزی 🇮🇩'),
-                ('google', 'ethiopia', 'virtual4', 'اتیوپی 🇪🇹'),
-                ('google', 'russia', 'mts', 'روسیه 🇷🇺')
-            ]
+            # تنظیمات از المصدر الموحد (Single Source of Truth)
+            default_settings = get_all_service_countries()
             
             # اضافه کردن تنظیمات جدید
             cursor.executemany('''

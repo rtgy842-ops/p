@@ -30,10 +30,7 @@ def setup_users_database():
         except sqlite3.OperationalError:
             pass  # ستون از قبل وجود دارد
 
-        # حذف جدول قدیمی اگر وجود دارد
-        cursor.execute('DROP TABLE IF EXISTS transactions')
-        
-        # ایجاد جدول جدید با ساختار صحیح
+        # ایجاد جدول جدید با ساختار صحیح (بدون حذف داده‌های قبلی)
         cursor.execute('''CREATE TABLE transactions
             (id INTEGER PRIMARY KEY AUTOINCREMENT,
              user_id INTEGER,

@@ -8,6 +8,12 @@ import logging
 from admin_config import AdminConfig
 import locale
 from config import BOT_CONFIG, HEROSMS_CONFIG, DB_CONFIG, PAYMENT_CONFIG, COUNTRY_ID_MAP, SERVICE_CODE_MAP
+from data.service_countries import (
+    SERVICE_COUNTRIES, ALL_SERVICES, SERVICE_DISPLAY_KEYS,
+    get_countries_for_service as _get_countries_for_service,
+    get_default_operator as _get_default_operator,
+    get_country_name as _get_country_name
+)
 from i18n import get_text, set_user_language, get_user_language
 from currency_service import CurrencyService
 from datetime import datetime, timedelta
@@ -128,42 +134,12 @@ def get_countries_for_service(service):
     conn = sqlite3.connect('sms_bot.db')
     cursor = conn.cursor()
     
-    # تنظیم کشورهای اختصاصی برای هر سرویس
-    service_countries = {
-        'telegram': [
-            {'code': 'cyprus', 'name': 'قبرس'},
-            {'code': 'paraguay', 'name': 'پاراگوئه'},
-            {'code': 'maldives', 'name': 'مالدیو'},
-            {'code': 'suriname', 'name': 'سورینام'},
-            {'code': 'slovenia', 'name': 'اسلوونی'},
-            {'code': 'canada', 'name': 'کانادا'}
-        ],
-        'whatsapp': [
-            {'code': 'georgia', 'name': 'گرجستان'},
-            {'code': 'cameroon', 'name': 'کامرون'},
-            {'code': 'laos', 'name': 'لائوس'},
-            {'code': 'benin', 'name': 'بنین'},
-            {'code': 'dominican_republic', 'name': 'جمهوری دومینیکن'}
-        ],
-        'instagram': [
-            {'code': 'poland', 'name': 'لهستان'},
-            {'code': 'philippines', 'name': 'فیلیپین'},
-            {'code': 'netherlands', 'name': 'هلند'},
-            {'code': 'estonia', 'name': 'استونی'},
-            {'code': 'vietnam', 'name': 'ویتنام'}
-        ],
-        'google': [
-            {'code': 'cambodia', 'name': 'کامبوج'},
-            {'code': 'philippines', 'name': 'فیلیپین'},
-            {'code': 'indonesia', 'name': 'اندونزی'},
-            {'code': 'ethiopia', 'name': 'اتیوپی'},
-            {'code': 'russia', 'name': 'روسیه'}
+    # استفاده از المصدر الموحد (Single Source of Truth)
+    if service in SERVICE_COUNTRIES:
+        return [
+            {'code': country[0], 'name': country[1]}
+            for country in SERVICE_COUNTRIES[service]
         ]
-    }
-    
-    # اگر سرویس در لیست ما باشد، کشورهای اختصاصی آن را برگردان
-    if service in service_countries:
-        return service_countries[service]
     
     # در غیر این صورت، کشورهای پیش‌فرض یا همه کشورها را از دیتابیس برگردان
     try:
@@ -523,16 +499,8 @@ def handle_service_selection(call):
             
         keyboard = types.InlineKeyboardMarkup(row_width=2)
         
-        # Service-country mapping (codes only, i18n for display)
-        service_countries = {
-            'telegram': ['cyprus', 'paraguay', 'maldives', 'suriname', 'slovenia', 'canada'],
-            'whatsapp': ['georgia', 'cameroon', 'laos', 'benin', 'dominican_republic'],
-            'instagram': ['poland', 'philippines', 'netherlands', 'estonia', 'vietnam'],
-            'google': ['cambodia', 'philippines', 'indonesia', 'ethiopia', 'russia']
-        }
-        
-        # انتخاب کشورهای مرتبط با سرویس انتخاب شده
-        countries = service_countries.get(service, [])
+        # استفاده از المصدر الموحد (Single Source of Truth)
+        countries = _get_countries_for_service(service)
         
         # نمایش کشورها دو به دو
         for i in range(0, len(countries), 2):
@@ -2021,7 +1989,7 @@ def handle_buy_number(call):
                 # ارسال پیام موفقیت به کاربر
                 keyboard = types.InlineKeyboardMarkup(row_width=2)
                 keyboard.add(
-                    types.InlineKeyboardButton("📱 مشاهده جزئیات", url=f"{BOT_CONFIG['webhook_base_url']}/number/{order['id']}"),
+                    types.InlineKeyboardButton("📱 مشاهده جزئیات", url=f"{BOT_CONFIG['website_url']}/number/{order['id']}"),
                     types.InlineKeyboardButton("🔙 برگشت", callback_data="back_to_main")
                 )
 
@@ -2274,7 +2242,7 @@ def handle_buy_number(call):
                         
                         if order_id:
                             # استفاده از یک URL کامل با هاست
-                            details_url = f"https://clever-bluejay-charmed.ngrok-free.app/number_details/{order_id}"
+                            details_url = f"{BOT_CONFIG['website_url']}/number_details/{order_id}"
                             
                             keyboard = types.InlineKeyboardMarkup(row_width=1)
                             keyboard.add(
@@ -2390,7 +2358,7 @@ def handle_get_code(call):
                 keyboard = types.InlineKeyboardMarkup()
                 keyboard.add(types.InlineKeyboardButton(
                     get_text(user_id, 'purchase.view_details'),
-                    url=f"https://clever-bluejay-charmed.ngrok-free.app/number_details/{order_id}"
+                    url=f"{BOT_CONFIG['website_url']}/number_details/{order_id}"
                 ))
                 keyboard.add(types.InlineKeyboardButton(
                     get_text(user_id, 'navigation.back_to_main'),
@@ -2615,19 +2583,11 @@ def handle_operator_settings(call):
         
         text = get_text(user_id, 'operators.settings_title')
         
-        # کشورهای هر سرویس با کلیدهای i18n
-        service_countries = {
-            'telegram': ['cyprus', 'paraguay', 'maldives', 'suriname', 'slovenia', 'canada'],
-            'whatsapp': ['georgia', 'cameroon', 'laos', 'benin', 'dominican_republic'],
-            'instagram': ['poland', 'philippines', 'netherlands', 'estonia', 'vietnam'],
-            'google': ['cambodia', 'philippines', 'indonesia', 'ethiopia', 'russia']
-        }
-        service_keys = {'telegram': 'telegram', 'whatsapp': 'whatsapp', 'instagram': 'instagram', 'google': 'google'}
-        
-        for svc_key in service_keys:
+        # استفاده از المصدر الموحد (Single Source of Truth)
+        for svc_key in ALL_SERVICES:
             svc_name = get_text(user_id, f'operators.service_{svc_key}')
             text += f"🔹 {svc_name}:\n"
-            for country_code in service_countries[svc_key]:
+            for country_code in _get_countries_for_service(svc_key):
                 country_name = get_text(user_id, f'countries.{country_code}')
                 operator = next((s[2] for s in settings if s[0] == svc_key and s[1] == country_code), get_text(user_id, 'operators.not_set'))
                 text += f"  • {country_name}: {operator}\n"
@@ -2688,21 +2648,14 @@ def handle_select_service(call):
             
         service = call.data.split('_')[2]
         
-        service_countries = {
-            'telegram': ['cyprus', 'paraguay', 'maldives', 'suriname', 'slovenia', 'canada'],
-            'whatsapp': ['georgia', 'cameroon', 'laos', 'benin', 'dominican_republic'],
-            'instagram': ['poland', 'philippines', 'netherlands', 'estonia', 'vietnam'],
-            'google': ['cambodia', 'philippines', 'indonesia', 'ethiopia', 'russia']
-        }
-        
-        if service not in service_countries:
+        if service not in SERVICE_COUNTRIES:
             bot.answer_callback_query(call.id, get_text(user_id, 'operators.invalid_service'))
             return
         
         text = get_text(user_id, 'operators.select_country', service=service)
         
         keyboard = types.InlineKeyboardMarkup(row_width=2)
-        for country_code in service_countries[service]:
+        for country_code in _get_countries_for_service(service):
             country_name = get_text(user_id, f'countries.{country_code}')
             keyboard.add(types.InlineKeyboardButton(country_name, callback_data=f"select_country_{service}_{country_code}"))
         
@@ -2826,7 +2779,7 @@ def user_orders(user_id):
                 'price': order[4],  # حذف فرمت کردن اعداد از اینجا
                 'status': order[5],
                 'date': order[6],
-                'details_url': f"https://clever-bluejay-charmed.ngrok-free.app/number_details/{order[0]}"
+                'details_url': f"{BOT_CONFIG['website_url']}/number_details/{order[0]}"
             })
         
         # اضافه کردن لاگ برای رندر
@@ -3189,7 +3142,27 @@ def process_card_holder(message):
         logging.error(f"Error saving card holder: {e}")
         bot.reply_to(message, "❌ خطا در ذخیره نام صاحب کارت. لطفاً مجدداً تلاش کنید.")
 
+# ── Admin Authentication Decorator for Test Endpoints ──────────
+def _require_admin(f):
+    """Decorator to protect test/debug endpoints with admin authentication."""
+    from functools import wraps
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        # Check X-Admin-Token header (enterprise-grade)
+        admin_token = request.headers.get('X-Admin-Token', '')
+        admin_id_str = request.args.get('admin_id', '')
+        
+        # Accept either valid admin token or admin_id in query
+        if admin_token == BOT_CONFIG['token']:
+            return f(*args, **kwargs)
+        if admin_id_str.isdigit() and int(admin_id_str) in BOT_CONFIG['admin_ids']:
+            return f(*args, **kwargs)
+        return jsonify({'success': False, 'message': 'Unauthorized: admin access required'}), 403
+    return decorated
+
+
 @app.route('/test_db_connection')
+@_require_admin
 def test_db_connection():
     try:
         conn = sqlite3.connect(DB_CONFIG['users_db'])
@@ -3201,6 +3174,7 @@ def test_db_connection():
         return jsonify({'success': False, 'message': f'❌ خطا در اتصال به دیتابیس: {str(e)}'})
 
 @app.route('/test_create_user', methods=['POST'])
+@_require_admin
 def test_create_user():
     try:
         data = request.get_json()
@@ -3220,6 +3194,7 @@ def test_create_user():
         return jsonify({'success': False, 'message': f'❌ خطا در ایجاد کاربر: {str(e)}'})
 
 @app.route('/test_add_balance', methods=['POST'])
+@_require_admin
 def test_add_balance():
     try:
         data = request.get_json()
@@ -3238,6 +3213,7 @@ def test_add_balance():
         return jsonify({'success': False, 'message': f'❌ خطا: {str(e)}'})
 
 @app.route('/test_transaction', methods=['POST'])
+@_require_admin
 def test_transaction():
     try:
         data = request.get_json()
@@ -3296,6 +3272,7 @@ def test_transaction():
         })
 
 @app.route('/test_check_balance', methods=['POST'])
+@_require_admin
 def test_check_balance():
     try:
         data = request.get_json()
@@ -3310,10 +3287,12 @@ def test_check_balance():
         return jsonify({'success': False, 'message': f'❌ خطا: {str(e)}'})
 
 @app.route('/test_payment')
+@_require_admin
 def test_payment_page():
     return render_template('test_payment.html')
 
 @app.route('/recreate_transactions_table')
+@_require_admin
 def recreate_transactions_table():
     try:
         if setup_users_database():
@@ -3337,10 +3316,12 @@ def recreate_transactions_table():
 backup_manager = BackupManager(backup_interval=5)
 
 @app.route('/test_backup')
+@_require_admin
 def test_backup_page():
     return render_template('test_backup.html')
 
 @app.route('/create_backup')
+@_require_admin
 def create_backup():
     try:
         if backup_manager.create_backup():
@@ -3359,6 +3340,7 @@ def create_backup():
         })
 
 @app.route('/restore_backup')
+@_require_admin
 def restore_backup():
     try:
         if backup_manager.restore_backup():
@@ -3377,6 +3359,7 @@ def restore_backup():
         })
 
 @app.route('/backup_content')
+@_require_admin
 def backup_content():
     try:
         with open('data/users_backup.json', 'r', encoding='utf-8') as f:
@@ -3397,6 +3380,7 @@ def backup_content():
         })
 
 @app.route('/backup_status')
+@_require_admin
 def backup_status():
     return jsonify({
         'success': True,
@@ -3423,6 +3407,7 @@ def initialize_bot():
         return False
 
 @app.route('/check_database')
+@_require_admin
 def check_database():
     try:
         conn = sqlite3.connect(DB_CONFIG['users_db'])
@@ -3457,10 +3442,12 @@ def check_database():
         })
 
 @app.route('/test_purchase')
+@_require_admin
 def test_purchase_page():
     return render_template('test_purchase.html')
 
 @app.route('/test_get_services')
+@_require_admin
 def test_get_services():
     try:
         # استفاده از تابع واقعی ربات
@@ -3486,6 +3473,7 @@ def test_get_services():
         })
 
 @app.route('/test_get_countries/<service>')
+@_require_admin
 def test_get_countries(service):
     try:
         # استفاده از تابع واقعی ربات
@@ -3511,6 +3499,7 @@ def test_get_countries(service):
         })
 
 @app.route('/test_get_number', methods=['POST'])
+@_require_admin
 def test_get_number():
     try:
         data = request.get_json()
@@ -3548,6 +3537,7 @@ def test_get_number():
         })
 
 @app.route('/test_purchase_number', methods=['POST'])
+@_require_admin
 def test_purchase_number():
     try:
         data = request.get_json()
@@ -3718,6 +3708,7 @@ def save_order(order_data):
         return None
 
 @app.route('/price_calculator')
+@_require_admin
 def price_calculator():
     try:
         # دریافت نرخ دلار و درصد سود از دیتابیس
@@ -3740,6 +3731,7 @@ def price_calculator():
         return "خطا در بارگذاری صفحه"
 
 @app.route('/update_usd_rate')
+@_require_admin
 def update_usd_rate():
     try:
         api_key = 'free26Ln3Pt7qXlEydjJYJEKDcjEYKuS'  # API key ناواسان
@@ -3776,6 +3768,7 @@ def update_usd_rate():
         })
 
 @app.route('/get_usd_rate')
+@_require_admin
 def get_usd_rate():
     try:
         import requests
@@ -3804,6 +3797,7 @@ def get_usd_rate():
         })
 
 @app.route('/get_settings')
+@_require_admin
 def get_settings():
     try:
         conn = sqlite3.connect('admin.db')
@@ -3832,10 +3826,12 @@ def get_settings():
         })
 
 @app.route('/telegram_prices')
+@_require_admin
 def telegram_prices():
     return render_template('telegram_prices.html')
 
 @app.route('/api/get_telegram_price/<country>')
+@_require_admin
 def get_telegram_price(country):
     try:
         country_id = COUNTRY_ID_MAP.get(country, country)
@@ -3924,6 +3920,7 @@ def get_telegram_price(country):
         })
 
 @app.route('/test_api_key')
+@_require_admin
 def test_api_key():
     try:
         params = {

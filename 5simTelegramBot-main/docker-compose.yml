@@ -1,0 +1,123 @@
+# ── docker-compose.yml — Multi-Service Architecture ────────
+# Services: nginx (reverse proxy) → bot | web | worker + redis
+
+version: '3.9'
+
+x-common: &common
+  restart: unless-stopped
+  env_file: .env
+  networks:
+    - internal
+
+services:
+  # ── Nginx: Reverse Proxy + SSL Termination + Rate Limiting ──
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: smsbot-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      # SSL certs (mount your own)
+      # - ./certs:/etc/nginx/certs:ro
+    depends_on:
+      - bot
+    restart: unless-stopped
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ── Bot: Main Telegram Bot + Flask Webhook ─────────────────
+  bot:
+    <<: *common
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: smsbot-bot
+    ports:
+      - "5000:5000"
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - bot_data:/app/data
+      - bot_logs:/app/logs
+    command: python bot.py
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/ping"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # ── Redis: Cache + Queue Backend + Rate Limiting ───────────
+  redis:
+    image: redis:7-alpine
+    container_name: smsbot-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --save 900 1
+      --save 300 10
+      --save 60 10000
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # ── Worker: Background Task Processor (Celery) ─────────────
+  worker:
+    <<: *common
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: smsbot-worker
+    command: celery -A tasks worker --loglevel=info --concurrency=2
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - bot_data:/app/data
+      - bot_logs:/app/logs
+
+  # ── Beat: Celery Beat Scheduler (optional) ─────────────────
+  beat:
+    <<: *common
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: smsbot-beat
+    command: celery -A tasks beat --loglevel=info
+    depends_on:
+      redis:
+        condition: service_healthy
+
+volumes:
+  bot_data:
+    driver: local
+  bot_logs:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  internal:
+    driver: bridge
