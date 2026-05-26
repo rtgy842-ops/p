@@ -1,7 +1,6 @@
 # ── docker-compose.yml — Multi-Service Architecture ────────
-# Services: nginx (reverse proxy) → bot | web | worker + redis
-
-version: '3.9'
+# Services: nginx (reverse proxy) → bot + redis (+ optional worker/beat)
+# Start with: docker compose up -d
 
 x-common: &common
   restart: unless-stopped
@@ -25,13 +24,6 @@ services:
     depends_on:
       - bot
     restart: unless-stopped
-    networks:
-      - internal
-    healthcheck:
-      test: ["CMD", "nginx", "-t"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
 
   # ── Bot: Main Telegram Bot + Flask Webhook ─────────────────
   bot:
@@ -46,6 +38,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+    networks:
+      - internal
     volumes:
       - bot_data:/app/data
       - bot_logs:/app/logs

@@ -40,15 +40,14 @@ bot = telebot.TeleBot(BOT_CONFIG['token'])
 app = Flask(__name__, static_folder='static')
 app.register_blueprint(order_details_bp)  # ثبت Blueprint مسیرهای جزئیات سفارش
 
-# تنظیمات logging
+# تنظیمات logging — Docker-friendly: logs to stdout (captured by Docker)
+import sys
 logging.basicConfig(
-    filename='bot.log',
+    stream=sys.stdout,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
-
-# اضافه کردن handler برای نمایش لاگ‌ها در کنسول
 console_handler = logging.StreamHandler()
 console_handler.setLevel(logging.INFO)
 formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
