@@ -12,8 +12,8 @@ except Exception:
 BOT_CONFIG = {
     'token': os.getenv('BOT_TOKEN', '7728660088:AAHW7p6ebM1m9Xpi9vTgPQDBaSOgOFPhaPM'),
     'admin_ids': [int(x.strip()) for x in os.getenv('ADMIN_IDS', '1457637832').split(',')],
-    'webhook_url': os.getenv('WEBHOOK_URL', 'https://clever-bluejay-charmed.ngrok-free.app'),
-    'website_url': os.getenv('WEBSITE_URL', 'https://clever-bluejay-charmed.ngrok-free.app')
+    'webhook_url': os.getenv('WEBHOOK_URL', 'https://sms.abunumapp.com'),
+    'website_url': os.getenv('WEBSITE_URL', 'https://sms.abunumapp.com')
 }
 
 # تنظیمات hero-sms.com (SMS-Activate Protocol)
