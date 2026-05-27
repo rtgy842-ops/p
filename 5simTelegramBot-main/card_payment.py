@@ -4,6 +4,7 @@ import logging
 import time
 from config import BOT_CONFIG, DB_CONFIG
 from database import add_balance, save_transaction
+from compat.legacy_facade import add_balance as compat_add_balance
 from i18n import get_text
 
 class CardPayment:
@@ -183,7 +184,9 @@ class CardPayment:
                 return
 
             # افزایش موجودی کاربر
-            new_balance = add_balance(user_id, amount)
+            new_balance = compat_add_balance(user_id, amount,
+                description='شارژ حساب از طریق کارت به کارت',
+                ref_id=payment_id)
             if new_balance is not None:
                 # ثبت تراکنش
                 save_transaction(

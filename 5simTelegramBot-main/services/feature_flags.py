@@ -101,5 +101,33 @@ class FeatureFlags:
         self._cache.clear(self._FLAG_PREFIX)
 
 
+# ── Migration Phase Feature Flags ──────────────────────────────
+# These control the gradual migration from legacy to new enterprise services.
+# Default: ALL FALSE (legacy code path). Enable one at a time per phase.
+MIGRATION_FLAGS = {
+    'use_new_wallet_service':    False,  # Phase A — WalletService for balance ops
+    'use_new_sms_service':       False,  # Phase B — SMSService for all API calls
+    'use_new_order_service':     False,  # Phase C — OrderService with state machine
+    'use_new_payment_service':   False,  # Phase D — PaymentService gateways
+    'use_new_admin_service':     False,  # Phase E/F — AdminService for admin ops
+}
+
+def is_migration_enabled(flag_name: str) -> bool:
+    """Check if a specific migration feature flag is enabled.
+    
+    Falls back gracefully: if the FeatureFlags system is unavailable (e.g.,
+    before DB setup), returns the hardcoded default from MIGRATION_FLAGS.
+    """
+    try:
+        enabled = flags.is_enabled(flag_name)
+        if enabled:
+            return True
+        # If not explicitly set in DB, fall back to hardcoded default
+        return MIGRATION_FLAGS.get(flag_name, False)
+    except Exception:
+        # Graceful degradation — if flags system isn't ready, use hardcoded defaults
+        return MIGRATION_FLAGS.get(flag_name, False)
+
+
 # ── Global instance ────────────────────────────────────────────
 flags = FeatureFlags()

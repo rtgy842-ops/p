@@ -26,6 +26,25 @@ from persiantools.jdatetime import JalaliDateTime
 import time
 from card_payment import CardPayment
 from backup_manager import BackupManager
+from compat.legacy_facade import (
+    get_balance as compat_get_balance,
+    add_balance as compat_add_balance,
+    deduct_balance as compat_deduct_balance,
+    refund_balance as compat_refund_balance,
+    get_wallet_info as compat_get_wallet_info,
+    sms_get_prices as compat_sms_get_prices,
+    sms_get_products as compat_sms_get_products,
+    sms_buy_number as compat_sms_buy_number,
+    sms_check_status as compat_sms_check_status,
+    sms_cancel_number as compat_sms_cancel_number,
+    sms_get_balance as compat_sms_get_balance,
+    order_save as compat_order_save,
+    order_save_code as compat_order_save_code,
+    order_update_status as compat_order_update_status,
+    order_cancel as compat_order_cancel,
+    payment_create_zarinpal as compat_zarinpal_create,
+    payment_verify_zarinpal as compat_zarinpal_verify,
+)
 import logging.handlers
 from routes.order_details import order_details_bp  # برای مسیرهای جزئیات سفارش
 
@@ -172,29 +191,13 @@ def get_prices(product):
         logger.error(f"خطا در دریافت قیمت‌ها: {e}")
         return None
 
-# تابع دریافت محصولات موجود از hero-sms.com (SMS-Activate Protocol)
+# تابع دریافت محصولات موجود — uses compat layer
 def get_products(country='any', operator='any'):
     """دریافت وضعیت شماره‌های موجود"""
-    try:
-        params = {
-            'api_key': HEROSMS_CONFIG['api_key'],
-            'action': 'getNumbersStatus'
-        }
-        if country != 'any':
-            country_id = COUNTRY_ID_MAP.get(country, country)
-            params['country'] = country_id
-        response = requests.get(
-            HEROSMS_CONFIG['api_url'],
-            params=params,
-            timeout=10
-        )
-        response.raise_for_status()
-        data = response.json()
+    data = compat_sms_get_products(country, operator)
+    if data:
         logger.info(f"پاسخ API برای محصولات {country}/{operator}: {data}")
-        return data
-    except Exception as e:
-        logger.error(f"خطا در دریافت محصولات: {e}")
-        return None
+    return data
 
 # تنظیم وب‌هوک
 @app.route('/', methods=['GET', 'POST'])
@@ -393,7 +396,7 @@ def handle_main_menu(call):
         user_id = call.from_user.id
         
         if call.data == 'check_balance':
-            balance = get_user_balance(user_id)
+            balance = compat_get_balance(user_id)
             keyboard = types.InlineKeyboardMarkup(row_width=1)
             keyboard.add(
                 types.InlineKeyboardButton(get_text(user_id, 'main_menu.add_funds'), callback_data="add_funds"),
@@ -1232,29 +1235,21 @@ def process_balance_change(message, action, target_id):
         if amount <= 0:
             raise ValueError(get_text(admin_id, 'admin.amount_must_be_positive'))
             
-        conn = sqlite3.connect('users.db')
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT balance FROM users WHERE user_id = ?', (target_id,))
-        current_balance = cursor.fetchone()
-        
-        if current_balance is None:
-            bot.reply_to(message, get_text(admin_id, 'admin.user_not_found_db'))
-            return
-            
-        current_balance = current_balance[0]
-        
         if action == "add":
-            new_balance = current_balance + amount
+            from compat.legacy_facade import admin_add_balance
+            new_balance = admin_add_balance(int(target_id), amount, admin_id)
         else:
+            from compat.legacy_facade import admin_deduct_balance
+            # Check balance first via compat layer
+            current_balance = compat_get_balance(int(target_id))
             if current_balance < amount:
                 bot.reply_to(message, get_text(admin_id, 'admin.insufficient_balance_admin'))
                 return
-            new_balance = current_balance - amount
+            new_balance = admin_deduct_balance(int(target_id), amount, admin_id)
         
-        cursor.execute('UPDATE users SET balance = ? WHERE user_id = ?', (new_balance, target_id))
-        conn.commit()
-        conn.close()
+        if new_balance is None:
+            bot.reply_to(message, get_text(admin_id, 'errors.general_short'))
+            return
         
         keyboard = types.InlineKeyboardMarkup()
         keyboard.add(types.InlineKeyboardButton(get_text(admin_id, 'navigation.back_to_search'), callback_data="search_user"))
@@ -1901,7 +1896,7 @@ def handle_buy_number(call):
         purchase_logger.info(f"Service: {service}, Country: {country}")
 
         # بررسی موجودی کاربر
-        user_balance = get_user_balance(call.from_user.id)
+        user_balance = compat_get_balance(call.from_user.id)
         purchase_logger.info(f"User balance: {user_balance}")
 
         # دریافت قیمت
@@ -1948,7 +1943,8 @@ def handle_buy_number(call):
                 return
             
             # کم کردن موجودی
-            new_balance = add_balance(call.from_user.id, -price)
+            new_balance = compat_deduct_balance(call.from_user.id, price,
+                description=f'خرید شماره {service} در {country}')
             logging.info(f"New balance after purchase: {new_balance}")
 
             try:
@@ -2008,7 +2004,8 @@ def handle_buy_number(call):
             except sqlite3.Error as db_error:
                 logging.error(f"Database error: {db_error}")
                 # برگرداندن پول در صورت خطا
-                add_balance(call.from_user.id, price)
+                compat_refund_balance(call.from_user.id, price,
+                    description='بازگشت وجه بابت خطا در ثبت سفارش')
                 bot.answer_callback_query(call.id, "❌ خطا در ثبت سفارش")
             finally:
                 conn.close()
@@ -2023,103 +2020,11 @@ def handle_buy_number(call):
 
 def buy_activation_number(country, operator, product, forwarding=False, forwarding_number=None, reuse=None, voice=None, ref=None, max_price=None):
     """
-    خرید شماره از سرویس hero-sms.com (SMS-Activate Protocol)
-    پاسخ موفق: ACCESS_NUMBER:ID:PHONE
+    خرید شماره — uses compat layer (legacy or SMSService)
     """
-    try:
-        country_id = COUNTRY_ID_MAP.get(country, country)
-        service_code = SERVICE_CODE_MAP.get(product, product)
-        
-        params = {
-            'api_key': HEROSMS_CONFIG['api_key'],
-            'action': 'getNumber',
-            'service': service_code,
-            'country': country_id
-        }
-        
-        if operator and operator != 'any':
-            params['operator'] = operator
-        if forwarding:
-            params['forwarding'] = '1'
-            if forwarding_number:
-                params['number'] = forwarding_number
-        if reuse:
-            params['reuse'] = '1'
-        if voice:
-            params['voice'] = '1'
-        if ref:
-            params['ref'] = ref
-        if max_price:
-            params['maxPrice'] = str(max_price)
-        
-        logging.info(f"Sending request to hero-sms.com API: URL={HEROSMS_CONFIG['api_url']}, Params={params}")
-        
-        response = requests.get(
-            HEROSMS_CONFIG['api_url'],
-            params=params,
-            timeout=30
-        )
-        
-        logging.info(f"hero-sms.com API response status: {response.status_code}")
-        logging.info(f"hero-sms.com API response body: {response.text}")
-        
-        resp_text = response.text.strip()
-        
-        # بررسی خطاهای متنی SMS-Activate
-        if resp_text == 'NO_NUMBERS':
-            return {
-                'success': False,
-                'error': 'در حال حاضر شماره‌ای برای این سرویس موجود نیست. لطفاً اپراتور دیگری را امتحان کنید.'
-            }
-        elif resp_text == 'NO_BALANCE':
-            return {
-                'success': False,
-                'error': 'موجودی حساب hero-sms.com کافی نیست.'
-            }
-        elif resp_text.startswith('ERROR'):
-            return {
-                'success': False,
-                'error': f'خطای API: {resp_text}'
-            }
-        elif resp_text.startswith('ACCESS_NUMBER:'):
-            # موفقیت: ACCESS_NUMBER:ID:PHONE
-            parts = resp_text.split(':')
-            activation_id = parts[1]
-            phone = parts[2]
-            return {
-                'success': True,
-                'data': {
-                    'order_id': activation_id,
-                    'phone': phone,
-                    'operator': operator,
-                    'product': product,
-                    'price': 0,
-                    'status': 'PENDING',
-                    'expires': '',
-                    'created_at': '',
-                    'country': country
-                }
-            }
-        else:
-            return {
-                'success': False,
-                'error': f'پاسخ غیرمنتظره API: {resp_text}'
-            }
-        
-    except requests.exceptions.RequestException as e:
-        error_msg = f"خطا در ارتباط با سرور: {str(e)}"
-        logging.error(error_msg)
-        return {
-            'success': False,
-            'error': error_msg
-        }
-    except Exception as e:
-        error_msg = f"خطای غیرمنتظره: {str(e)}"
-        logging.error(error_msg)
-        return {
-            'success': False,
-            'error': error_msg
-        }
+    return compat_sms_buy_number(country, operator, product,
+        forwarding=forwarding, forwarding_number=forwarding_number,
+        reuse=reuse, voice=voice, ref=ref, max_price=max_price)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('buy_number_'))
 def handle_buy_number(call):
@@ -2127,7 +2032,7 @@ def handle_buy_number(call):
         user_id = call.from_user.id
         
         # بررسی موجودی کاربر
-        balance = get_user_balance(user_id)
+        balance = compat_get_balance(user_id)
         logging.info(f"User {user_id} balance checked: {balance}")
         
         parts = call.data.split('_')
@@ -2222,7 +2127,8 @@ def handle_buy_number(call):
                         status = order_data['status']
                         
                         # کم کردن موجودی کاربر
-                        add_balance(user_id, -price_toman)
+                        compat_deduct_balance(user_id, price_toman,
+                            description=f'خرید شماره {service} در {country}')
                         
                         # ثبت تراکنش در دیتابیس
                         order_info = {
@@ -2327,73 +2233,42 @@ def handle_get_code(call):
         user_id = call.from_user.id
         order_id = call.data.split('_')[2]
         
-        # دریافت کد از hero-sms.com (SMS-Activate Protocol: getStatus)
-        check_params = {
-            'api_key': HEROSMS_CONFIG['api_key'],
-            'action': 'getStatus',
-            'id': order_id
-        }
+        # دریافت کد — uses compat layer (legacy or SMSService)
+        check_result = compat_sms_check_status(int(order_id))
+        logging.info(f"Check status via compat: {check_result}")
         
-        check_url = HEROSMS_CONFIG['api_url']
-        logging.info(f"Checking order status: {check_url} with params {check_params}")
+        status = check_result.get('status', 'ERROR')
         
-        response = requests.get(
-            check_url,
-            params=check_params,
-            timeout=30
-        )
-        
-        logging.info(f"Check status response: {response.status_code}")
-        logging.info(f"Check status data: {response.text}")
-        
-        if response.status_code == 200:
-            resp_text = response.text.strip()
+        if status == 'RECEIVED':
+            code_text = check_result.get('code', '')
             
-            if resp_text.startswith('STATUS_OK:'):
-                # کد دریافت شده: STATUS_OK:12345
-                parts = resp_text.split(':')
-                code_text = parts[1] if len(parts) > 1 else ''
-                
-                keyboard = types.InlineKeyboardMarkup()
-                keyboard.add(types.InlineKeyboardButton(
-                    get_text(user_id, 'purchase.view_details'),
-                    url=f"{BOT_CONFIG['website_url']}/number_details/{order_id}"
-                ))
-                keyboard.add(types.InlineKeyboardButton(
-                    get_text(user_id, 'navigation.back_to_main'),
-                    callback_data="back_to_main"
-                ))
-                
-                # آپدیت وضعیت سفارش در دیتابیس
-                conn = sqlite3.connect('bot.db')
-                cursor = conn.cursor()
-                cursor.execute('UPDATE orders SET status = ? WHERE id = ?', ('RECEIVED', order_id))
-                
-                # ذخیره کد در جدول activation_codes
-                from datetime import datetime
-                cursor.execute("""
-                    INSERT INTO activation_codes (order_id, code, created_at)
-                    VALUES (?, ?, ?)
-                """, (order_id, code_text, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
-                
-                conn.commit()
-                conn.close()
-                
-                bot.edit_message_text(
-                    f"✅ {get_text(user_id, 'order.code_received', phone='', code=code_text, time='')}\n\n📱 کد: <b>{code_text}</b>",
-                    call.message.chat.id,
-                    call.message.message_id,
-                    reply_markup=keyboard,
-                    parse_mode='HTML'
-                )
-            elif resp_text == 'STATUS_WAIT_CODE' or resp_text == 'STATUS_WAIT_RETRY':
-                bot.answer_callback_query(call.id, get_text(user_id, 'order.code_not_received'))
-            elif resp_text == 'STATUS_CANCEL':
-                bot.answer_callback_query(call.id, get_text(user_id, 'order.cancelled_simple', refund=''))
-            else:
-                bot.answer_callback_query(call.id, get_text(user_id, 'order.code_not_received'))
+            keyboard = types.InlineKeyboardMarkup()
+            keyboard.add(types.InlineKeyboardButton(
+                get_text(user_id, 'purchase.view_details'),
+                url=f"{BOT_CONFIG['website_url']}/number_details/{order_id}"
+            ))
+            keyboard.add(types.InlineKeyboardButton(
+                get_text(user_id, 'navigation.back_to_main'),
+                callback_data="back_to_main"
+            ))
+            
+            # آپدیت وضعیت سفارش و ذخیره کد — uses compat
+            compat_order_update_status(int(order_id), 'RECEIVED')
+            compat_order_save_code(int(order_id), code_text)
+            
+            bot.edit_message_text(
+                f"✅ {get_text(user_id, 'order.code_received', phone='', code=code_text, time='')}\n\n📱 کد: <b>{code_text}</b>",
+                call.message.chat.id,
+                call.message.message_id,
+                reply_markup=keyboard,
+                parse_mode='HTML'
+            )
+        elif status == 'WAITING':
+            bot.answer_callback_query(call.id, get_text(user_id, 'order.code_not_received'))
+        elif status == 'CANCELLED':
+            bot.answer_callback_query(call.id, get_text(user_id, 'order.cancelled_simple', refund=''))
         else:
-            bot.answer_callback_query(call.id, get_text(user_id, 'order.status_check_error'))
+            bot.answer_callback_query(call.id, get_text(user_id, 'order.code_not_received'))
             
     except Exception as e:
         logging.error(f"خطا در دریافت کد: {e}")
@@ -2401,69 +2276,33 @@ def handle_get_code(call):
 
 def refund_order_amount(order_id):
     """
-    برگرداندن مبلغ سفارش به کاربر در هنگام لغو سفارش
+    برگرداندن مبلغ سفارش — uses compat layer (dual-write with OrderService)
     """
     try:
-        # دریافت اطلاعات سفارش
-        conn_orders = sqlite3.connect('bot.db')
-        cursor_orders = conn_orders.cursor()
-        
-        # جستجوی سفارش بر اساس activation_id
-        cursor_orders.execute('''
-            SELECT user_id, price, status FROM orders 
-            WHERE activation_id = ?
-        ''', (order_id,))
-        
-        order = cursor_orders.fetchone()
-        
-        if not order:
-            logging.error(f"سفارش با شناسه {order_id} یافت نشد")
-            conn_orders.close()
-            return False, "سفارش یافت نشد"
-            
-        user_id, price, status = order
-        
-        # اگر سفارش قبلاً لغو شده باشد، وجه را برنگردان
-        if status.upper() == "CANCELED":
-            logging.warning(f"سفارش {order_id} قبلاً لغو شده است")
-            conn_orders.close()
-            return False, "سفارش قبلاً لغو شده است"
-            
-        # بروزرسانی وضعیت سفارش
-        cursor_orders.execute('''
-            UPDATE orders SET status = "CANCELED" 
-            WHERE activation_id = ?
-        ''', (order_id,))
-        
-        conn_orders.commit()
-        conn_orders.close()
-        
-        # دریافت موجودی قبل از افزایش
-        current_balance = get_user_balance(user_id)
-        
-        if current_balance is None:
-            logging.error(f"کاربر با شناسه {user_id} یافت نشد")
-            return False, "کاربر یافت نشد"
-            
-        # افزایش موجودی کاربر با استفاده از تابع موجود
-        add_balance(user_id, price)
-        
-        # دریافت موجودی جدید (برای لاگ)
-        new_balance = get_user_balance(user_id)
-        
-        logging.info(f"مبلغ {price} تومان به حساب کاربر {user_id} برگشت داده شد. موجودی جدید: {new_balance}")
-        
-        # برگرداندن هر دو مقدار: مبلغ برگشتی و موجودی جدید
-        return True, {'refund_amount': price, 'new_balance': new_balance}
-        
+        # Use compat layer — handles both legacy + new order cancel
+        result = compat_order_cancel(int(order_id))
+        if not result.get('success'):
+            return False, result.get('error', 'سفارش یافت نشد')
+
+        # Get refund details from legacy for accurate reporting
+        import sqlite3
+        conn = sqlite3.connect('bot.db')
+        cursor = conn.cursor()
+        cursor.execute('SELECT user_id, price FROM orders WHERE activation_id = ?', (order_id,))
+        row = cursor.fetchone()
+        conn.close()
+
+        if row:
+            user_id, price = row
+            new_balance = compat_get_balance(user_id)
+            logging.info(f"مبلغ {price} تومان به حساب کاربر {user_id} برگشت داده شد. موجودی جدید: {new_balance}")
+            return True, {'refund_amount': price, 'new_balance': new_balance}
+        return False, "سفارش یافت نشد"
+
     except Exception as e:
         logging.error(f"خطا در برگرداندن وجه: {e}")
         import traceback
         logging.error(traceback.format_exc())
-        
-        if 'conn_orders' in locals():
-            conn_orders.close()
-            
         return False, str(e)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('cancel_order_'))
@@ -2480,21 +2319,10 @@ def handle_cancel_order(call):
             call.message.message_id
         )
         
-        # درخواست لغو سفارش به hero-sms.com (SMS-Activate: setStatus with status=8 = cancel)
-        cancel_params = {
-            'api_key': HEROSMS_CONFIG['api_key'],
-            'action': 'setStatus',
-            'id': order_id,
-            'status': '8'
-        }
+        # درخواست لغو سفارش — uses compat layer (legacy or SMSService)
+        cancel_result = compat_sms_cancel_number(order_id)
         
-        response = requests.get(
-            HEROSMS_CONFIG['api_url'],
-            params=cancel_params,
-            timeout=30
-        )
-        
-        if response.status_code == 200:
+        if cancel_result.get('success'):
             # برگرداندن وجه به کاربر با استفاده از تابع جدید
             success, result = refund_order_amount(order_id)
             
@@ -2830,40 +2658,11 @@ def process_zarinpal_amount(message):
             bot.reply_to(message, get_text(user_id, 'payment.min_amount'))
             return
             
-        # درخواست به API زرین‌پال
-        data = {
-            "merchant_id": PAYMENT_CONFIG['zarinpal_merchant'],
-            "amount": amount * 10,  # تبدیل به ریال
-            "description": f"شارژ حساب کاربر {message.from_user.id}",
-            "callback_url": f"{PAYMENT_CONFIG['callback_url']}/{message.from_user.id}/{amount}",  # این مسیر درست است چون از config می‌خواند
-            "metadata": {
-                "mobile": message.from_user.username or str(message.from_user.id),
-                "email": "",
-                "order_id": f"charge_{message.from_user.id}_{int(time.time())}"
-            }
-        }
+        # درخواست به API زرین‌پال — uses compat layer
+        success, payment_url, authority = compat_zarinpal_create(
+            user_id, amount, f"شارژ حساب کاربر {user_id}")
         
-        # تعیین آدرس API بر اساس حالت sandbox
-        if PAYMENT_CONFIG['sandbox_mode']:
-            request_url = "https://sandbox.zarinpal.com/pg/v4/payment/request.json"
-        else:
-            request_url = "https://payment.zarinpal.com/pg/v4/payment/request.json"
-            
-        response = requests.post(
-            request_url,
-            json=data,
-            headers={'accept': 'application/json', 'content-type': 'application/json'}
-        )
-        
-        result = response.json()
-        
-        if result['data']['code'] == 100:
-            # ساخت لینک پرداخت بر اساس حالت sandbox
-            if PAYMENT_CONFIG['sandbox_mode']:
-                payment_url = f"https://sandbox.zarinpal.com/pg/StartPay/{result['data']['authority']}"
-            else:
-                payment_url = f"https://payment.zarinpal.com/pg/StartPay/{result['data']['authority']}"
-                
+        if success and payment_url:
             keyboard = types.InlineKeyboardMarkup()
             keyboard.add(
                 types.InlineKeyboardButton(get_text(user_id, 'payment.payment_button'), url=payment_url),
@@ -2890,73 +2689,33 @@ def verify_payment(user_id, amount):
         if status != 'OK':
             return render_template('payment_result.html', success=False, message="پرداخت توسط کاربر لغو شد")
         
-        # تایید پرداخت با زرین‌پال
-        data = {
-            "merchant_id": PAYMENT_CONFIG['zarinpal_merchant'],
-            "amount": int(amount) * 10,  # تبدیل به ریال
-            "authority": authority
-        }
+        # تایید پرداخت با زرین‌پال — uses compat layer
+        success, ref_id = compat_zarinpal_verify(authority, int(amount))
         
-        verify_url = "https://sandbox.zarinpal.com/pg/v4/payment/verify.json" if PAYMENT_CONFIG['sandbox_mode'] else "https://payment.zarinpal.com/pg/v4/payment/verify.json"
-        
-        response = requests.post(
-            verify_url,
-            json=data,
-            headers={'accept': 'application/json', 'content-type': 'application/json'}
-        )
-        
-        result = response.json()
-        logging.info(f"Zarinpal verification response: {result}")
-        
-        if result['data']['code'] in [100, 101]:
-            # افزایش موجودی کاربر
-            new_balance = add_balance(int(user_id), int(amount))
-            
+        if success:
+            # افزایش موجودی (compat_add_balance handles dual-write + transaction log)
+            new_balance = compat_add_balance(int(user_id), int(amount),
+                description='شارژ حساب از طریق درگاه زرین' + chr(8204) + 'پال',
+                ref_id=ref_id)
+
             if new_balance is not None:
-                # ثبت تراکنش
-                conn = sqlite3.connect(DB_CONFIG['users_db'])
-                cursor = conn.cursor()
-                
-                cursor.execute('''CREATE TABLE IF NOT EXISTS transactions
-                    (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                     user_id INTEGER,
-                     amount INTEGER,
-                     type TEXT,
-                     description TEXT,
-                     ref_id TEXT,
-                     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
-                
-                cursor.execute('''
-                    INSERT INTO transactions (user_id, amount, type, description, ref_id)
-                    VALUES (?, ?, ?, ?, ?)
-                ''', (
-                    int(user_id),
-                    int(amount),
-                    'deposit',
-                    'شارژ حساب از طریق درگاه زرین‌پال',
-                    result['data']['ref_id']
-                ))
-                
-                conn.commit()
-                conn.close()
-                
                 # ارسال پیام به کاربر
                 success_message = f"""✅ پرداخت شما با موفقیت انجام شد
 
 💰 مبلغ: {int(amount):,} تومان
-🔢 کد پیگیری: {result['data']['ref_id']}
+🔢 کد پیگیری: {ref_id or '---'}
 💎 موجودی فعلی: {new_balance:,} تومان"""
 
                 try:
                     bot.send_message(int(user_id), success_message)
                 except Exception as e:
                     logging.error(f"Error sending message to user: {e}")
-                
+
                 return render_template(
                     'payment_result.html',
                     success=True,
                     amount=f"{int(amount):,}",
-                    ref_id=result['data']['ref_id'],
+                    ref_id=ref_id or '---',
                     balance=f"{new_balance:,}"
                 )
             else:
@@ -2970,7 +2729,7 @@ def verify_payment(user_id, amount):
             return render_template(
                 'payment_result.html',
                 success=False,
-                message=f"خطا در تایید پرداخت: {result['data'].get('message', 'خطای نامشخص')}"
+                message="خطا در تایید پرداخت"
             )
             
     except Exception as e:
@@ -3200,7 +2959,8 @@ def test_add_balance():
         user_id = int(data['user_id'])
         amount = int(data['amount'])
         
-        new_balance = add_balance(user_id, amount)
+        from compat.legacy_facade import add_balance as _compat_add
+        new_balance = _compat_add(user_id, amount, description='تراکنش تست')
         if new_balance is not None:
             return jsonify({
                 'success': True,
@@ -3220,7 +2980,8 @@ def test_transaction():
         amount = int(data['amount'])
         
         # اول موجودی را افزایش می‌دهیم
-        new_balance = add_balance(user_id, amount)
+        from compat.legacy_facade import add_balance as _compat_add
+        new_balance = _compat_add(user_id, amount, description='تراکنش تست')
         if new_balance is None:
             return jsonify({
                 'success': False,
@@ -3559,7 +3320,8 @@ def test_purchase_number():
         order_id = f'TEST{int(time.time())}'
         
         # کم کردن موجودی کاربر
-        new_balance = add_balance(test_user_id, -price)
+        from compat.legacy_facade import deduct_balance as _compat_deduct
+        new_balance = _compat_deduct(test_user_id, price, description='خرید تست')
         if new_balance is None:
             return jsonify({
                 'success': False,
@@ -3643,68 +3405,11 @@ def create_required_tables():
         return False
 
 def save_order(order_data):
-    try:
-        conn = sqlite3.connect('bot.db')
-        cursor = conn.cursor()
-        
-        # اطمینان از وجود جدول orders
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS orders (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                activation_id INTEGER NOT NULL,
-                service TEXT NOT NULL,
-                country TEXT NOT NULL,
-                operator TEXT NOT NULL,
-                phone TEXT NOT NULL,
-                price INTEGER NOT NULL,
-                status TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        # اطمینان از وجود جدول activation_codes
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS activation_codes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                order_id INTEGER NOT NULL,
-                code TEXT NOT NULL,
-                status TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (order_id) REFERENCES orders(id)
-            )
-        ''')
-        
-        # درج سفارش جدید
-        cursor.execute('''
-            INSERT INTO orders (
-                user_id, activation_id, service, country, 
-                operator, phone, price, status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            order_data['user_id'],
-            order_data['activation_id'],
-            order_data['service'],
-            order_data['country'],
-            order_data['operator'],
-            order_data['phone'],
-            order_data['price'],
-            order_data['status']
-        ))
-        
-        # دریافت شناسه سفارش ذخیره شده
-        order_id = cursor.lastrowid
-        
-        conn.commit()
-        conn.close()
-        logging.info(f"Order saved successfully: {order_data} with id {order_id}")
-        return order_id
-        
-    except Exception as e:
-        logging.error(f"خطا در ذخیره سفارش: {e}")
-        if 'conn' in locals():
-            conn.close()
-        return None
+    """ذخیره سفارش — uses compat layer (legacy or OrderService)"""
+    order_id = compat_order_save(order_data)
+    if order_id:
+        logging.info(f"Order saved successfully: id={order_id}")
+    return order_id
 
 @app.route('/price_calculator')
 @_require_admin
@@ -3922,23 +3627,16 @@ def get_telegram_price(country):
 @_require_admin
 def test_api_key():
     try:
-        params = {
-            'api_key': HEROSMS_CONFIG['api_key'],
-            'action': 'getBalance'
-        }
-        
-        response = requests.get(HEROSMS_CONFIG['api_url'], params=params, timeout=10)
-        
-        if response.status_code == 200 and 'ACCESS_BALANCE' in response.text:
+        balance = compat_sms_get_balance()
+        if balance is not None:
             return jsonify({
                 'status': 'success',
-                'message': f'کلید API معتبر است - موجودی: {response.text.strip()}'
+                'message': f'کلید API معتبر است — موجودی: {balance}'
             })
-        else:
-            return jsonify({
-                'status': 'error',
-                'message': f'خطا در اعتبارسنجی کلید API: {response.text}'
-            })
+        return jsonify({
+            'status': 'error',
+            'message': 'خطا در اعتبارسنجی کلید API'
+        })
     except Exception as e:
         return jsonify({
             'status': 'error',
