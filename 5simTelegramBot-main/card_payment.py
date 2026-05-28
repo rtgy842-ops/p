@@ -1,61 +1,47 @@
+"""
+card_payment.py — Card-to-Card Payment Handler (Enterprise Refactored)
+─────────────────────────────────────────────────
+Handles card payment flows: receipt submission, admin approval/rejection.
+Now uses enterprise CardPaymentRepository + WalletService.
+No direct sqlite3 connections.
+"""
+
 from telebot import types
-import sqlite3
 import logging
-import time
-from config import BOT_CONFIG, DB_CONFIG
-from database import add_balance, save_transaction
+from config import BOT_CONFIG
 from compat.legacy_facade import add_balance as compat_add_balance
+from db.repositories.card_payment_repository import CardPaymentRepository
+from db.repositories.settings_repository import SettingsRepository
 from i18n import get_text
 
+logger = logging.getLogger(__name__)
+
+
 class CardPayment:
+    """Card-to-Card payment flow handler."""
+    
     def __init__(self, bot):
         self.bot = bot
-        self.setup_database()
-
-    def setup_database(self):
-        try:
-            # ایجاد جدول پرداخت‌های کارت به کارت
-            conn = sqlite3.connect(DB_CONFIG['users_db'])
-            cursor = conn.cursor()
-            cursor.execute('''CREATE TABLE IF NOT EXISTS card_payments
-                (payment_id TEXT PRIMARY KEY,
-                 user_id INTEGER,
-                 amount INTEGER,
-                 status TEXT DEFAULT 'pending',
-                 receipt TEXT,
-                 admin_response TEXT,
-                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP)''')
-            conn.commit()
-            conn.close()
-        except Exception as e:
-            logging.error(f"Error in setup_database: {e}")
+        self._payment_repo = CardPaymentRepository()
+        self._settings_repo = SettingsRepository()
 
     def get_card_info(self):
+        """Get bank card info from admin.db."""
         try:
-            conn = sqlite3.connect(DB_CONFIG['admin_db'])
-            cursor = conn.cursor()
-            cursor.execute('SELECT card_number, card_holder FROM card_info LIMIT 1')
-            card_info = cursor.fetchone()
-            conn.close()
-            return card_info
+            card_info = self._settings_repo.get_card_info()
+            if card_info:
+                return (card_info['card_number'], card_info['card_holder'])
+            return None
         except Exception as e:
-            logging.error(f"Error getting card info: {e}")
+            logger.error(f"Error getting card info: {e}")
             return None
 
     def save_payment_request(self, user_id, amount):
+        """Create a new card payment request."""
         try:
-            payment_id = f"CP{int(time.time())}{user_id}"
-            conn = sqlite3.connect(DB_CONFIG['users_db'])
-            cursor = conn.cursor()
-            cursor.execute(
-                'INSERT INTO card_payments (payment_id, user_id, amount) VALUES (?, ?, ?)',
-                (payment_id, user_id, amount)
-            )
-            conn.commit()
-            conn.close()
-            return payment_id
+            return self._payment_repo.create(user_id, amount)
         except Exception as e:
-            logging.error(f"Error saving payment request: {e}")
+            logger.error(f"Error saving payment request: {e}")
             return None
 
     def handle_new_payment(self, message):
@@ -80,10 +66,22 @@ class CardPayment:
 
             keyboard = types.InlineKeyboardMarkup(row_width=1)
             keyboard.add(
-                types.InlineKeyboardButton(get_text(user_id, 'payment.card_number_btn', card=card_number), callback_data=f"copy_{card_number}"),
-                types.InlineKeyboardButton(get_text(user_id, 'payment.card_holder_btn', holder=card_holder), callback_data=f"copy_{card_holder}"),
-                types.InlineKeyboardButton(get_text(user_id, 'payment.send_receipt'), callback_data=f"send_receipt_{payment_id}"),
-                types.InlineKeyboardButton(get_text(user_id, 'navigation.back'), callback_data="add_funds")
+                types.InlineKeyboardButton(
+                    get_text(user_id, 'payment.card_number_btn', card=card_number),
+                    callback_data=f"copy_{card_number}"
+                ),
+                types.InlineKeyboardButton(
+                    get_text(user_id, 'payment.card_holder_btn', holder=card_holder),
+                    callback_data=f"copy_{card_holder}"
+                ),
+                types.InlineKeyboardButton(
+                    get_text(user_id, 'payment.send_receipt'),
+                    callback_data=f"send_receipt_{payment_id}"
+                ),
+                types.InlineKeyboardButton(
+                    get_text(user_id, 'navigation.back'),
+                    callback_data="add_funds"
+                )
             )
 
             self.bot.reply_to(
@@ -96,7 +94,7 @@ class CardPayment:
         except ValueError:
             self.bot.reply_to(message, get_text(message.from_user.id, 'payment.invalid_amount'))
         except Exception as e:
-            logging.error(f"Error in handle_new_payment: {e}")
+            logger.error(f"Error in handle_new_payment: {e}")
             self.bot.reply_to(message, get_text(message.from_user.id, 'errors.general'))
 
     def handle_receipt(self, message, payment_id):
@@ -107,40 +105,46 @@ class CardPayment:
             return
 
         try:
-            conn = sqlite3.connect(DB_CONFIG['users_db'])
-            cursor = conn.cursor()
-            cursor.execute('UPDATE card_payments SET receipt = ? WHERE payment_id = ?',
-                         (message.photo[-1].file_id, payment_id))
-            cursor.execute('SELECT amount FROM card_payments WHERE payment_id = ?', (payment_id,))
-            amount = cursor.fetchone()[0]
-            conn.commit()
-            conn.close()
+            file_id = message.photo[-1].file_id
+            self._payment_repo.update_receipt(payment_id, file_id)
+            
+            payment = self._payment_repo.find_by_id(payment_id)
+            amount = payment['amount'] if payment else 0
 
-            # ارسال به ادمین‌ها
+            # Send to admins
             keyboard = types.InlineKeyboardMarkup(row_width=2)
             keyboard.add(
-                types.InlineKeyboardButton(get_text(user_id, 'payment.approve'), callback_data=f"approve_payment_{payment_id}"),
-                types.InlineKeyboardButton(get_text(user_id, 'payment.reject'), callback_data=f"reject_payment_{payment_id}")
+                types.InlineKeyboardButton(
+                    get_text(user_id, 'payment.approve'),
+                    callback_data=f"approve_payment_{payment_id}"
+                ),
+                types.InlineKeyboardButton(
+                    get_text(user_id, 'payment.reject'),
+                    callback_data=f"reject_payment_{payment_id}"
+                )
             )
 
             for admin_id in BOT_CONFIG['admin_ids']:
                 self.bot.send_photo(
                     admin_id,
-                    message.photo[-1].file_id,
-                    get_text(admin_id, 'payment.admin_new_request', payment_id=payment_id, user_id=user_id, amount=amount),
+                    file_id,
+                    get_text(admin_id, 'payment.admin_new_request',
+                             payment_id=payment_id, user_id=user_id, amount=amount),
                     reply_markup=keyboard
                 )
 
-            # حذف پیام‌های قبلی
+            # Clean up old messages
             try:
                 for i in range(10):
                     self.bot.delete_message(message.chat.id, message.message_id - i)
-            except:
+            except Exception:
                 pass
 
-            # ارسال پیام جدید با دکمه برگشت
             keyboard = types.InlineKeyboardMarkup()
-            keyboard.add(types.InlineKeyboardButton(get_text(user_id, 'navigation.back_to_main'), callback_data="back_to_main"))
+            keyboard.add(types.InlineKeyboardButton(
+                get_text(user_id, 'navigation.back_to_main'),
+                callback_data="back_to_main"
+            ))
             
             self.bot.send_message(
                 message.chat.id,
@@ -149,7 +153,7 @@ class CardPayment:
             )
 
         except Exception as e:
-            logging.error(f"Error handling receipt: {e}")
+            logger.error(f"Error handling receipt: {e}")
             self.bot.reply_to(message, get_text(message.from_user.id, 'payment.receipt_error'))
 
     def verify_payment(self, call, payment_id, action):
@@ -159,16 +163,15 @@ class CardPayment:
             return
 
         try:
-            conn = sqlite3.connect(DB_CONFIG['users_db'])
-            cursor = conn.cursor()
-            cursor.execute('SELECT user_id, amount, status FROM card_payments WHERE payment_id = ?', (payment_id,))
-            payment = cursor.fetchone()
+            payment = self._payment_repo.find_by_id(payment_id)
 
             if not payment:
                 self.bot.answer_callback_query(call.id, get_text(admin_id, 'errors.invalid_data'))
                 return
 
-            user_id, amount, status = payment
+            user_id = payment['user_id']
+            amount = payment['amount']
+            status = payment['status']
 
             if status != 'pending':
                 self.bot.answer_callback_query(call.id, get_text(admin_id, 'errors.invalid_data'))
@@ -183,43 +186,36 @@ class CardPayment:
                 self.bot.register_next_step_handler(msg, self.process_rejection, payment_id)
                 return
 
-            # افزایش موجودی کاربر
+            # Approve: add balance + update payment status
             new_balance = compat_add_balance(user_id, amount,
-                description='شارژ حساب از طریق کارت به کارت',
+                description='Card-to-card payment approved',
                 ref_id=payment_id)
+            
             if new_balance is not None:
-                # ثبت تراکنش
-                save_transaction(
-                    user_id=user_id,
-                    amount=amount,
-                    type_trans='deposit',
-                    description='شارژ حساب از طریق کارت به کارت',
-                    ref_id=payment_id
-                )
-                cursor.execute('''
-                    UPDATE card_payments
-                    SET status = 'approved',
-                        admin_response = ?
-                    WHERE payment_id = ?
-                ''', (f"تایید شده توسط {admin_id}", payment_id))
-                conn.commit()
+                self._payment_repo.approve(payment_id, admin_id)
 
-                # ارسال پیام به کاربر
                 keyboard = types.InlineKeyboardMarkup(row_width=2)
                 keyboard.add(
-                    types.InlineKeyboardButton(get_text(user_id, 'main_menu.start_shopping'), callback_data="buy_number"),
-                    types.InlineKeyboardButton(get_text(user_id, 'navigation.back'), callback_data="back_to_main")
+                    types.InlineKeyboardButton(
+                        get_text(user_id, 'main_menu.start_shopping'),
+                        callback_data="buy_number"
+                    ),
+                    types.InlineKeyboardButton(
+                        get_text(user_id, 'navigation.back'),
+                        callback_data="back_to_main"
+                    )
                 )
                 
                 self.bot.send_message(
                     user_id,
-                    get_text(user_id, 'payment.approved_user', amount=amount, payment_id=payment_id, balance=new_balance),
+                    get_text(user_id, 'payment.approved_user',
+                             amount=amount, payment_id=payment_id, balance=new_balance),
                     reply_markup=keyboard
                 )
 
-                # آپدیت پیام ادمین
                 self.bot.edit_message_caption(
-                    get_text(admin_id, 'payment.approved_admin', amount=amount, user_id=user_id, balance=new_balance),
+                    get_text(admin_id, 'payment.approved_admin',
+                             amount=amount, user_id=user_id, balance=new_balance),
                     call.message.chat.id,
                     call.message.message_id
                 )
@@ -229,11 +225,8 @@ class CardPayment:
                 raise Exception("Failed to update balance")
 
         except Exception as e:
-            logging.error(f"Error in verify_payment: {e}")
+            logger.error(f"Error in verify_payment: {e}")
             self.bot.answer_callback_query(call.id, get_text(call.from_user.id, 'errors.general_short'))
-        finally:
-            if 'conn' in locals():
-                conn.close()
 
     def process_rejection(self, message, payment_id):
         admin_id = message.from_user.id
@@ -242,30 +235,23 @@ class CardPayment:
 
         try:
             reason = message.text.strip()
-            conn = sqlite3.connect(DB_CONFIG['users_db'])
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                UPDATE card_payments
-                SET status = 'rejected',
-                    admin_response = ?
-                WHERE payment_id = ?
-            ''', (reason, payment_id))
-            
-            cursor.execute('SELECT user_id, amount FROM card_payments WHERE payment_id = ?', (payment_id,))
-            payment = cursor.fetchone()
-            conn.commit()
-            conn.close()
+            self._payment_repo.reject(payment_id, reason)
 
+            payment = self._payment_repo.find_by_id(payment_id)
             if payment:
-                user_id, amount = payment
+                user_id = payment['user_id']
+                amount = payment['amount']
                 self.bot.send_message(
                     user_id,
-                    get_text(user_id, 'payment.rejected_user', amount=amount, payment_id=payment_id, reason=reason)
+                    get_text(user_id, 'payment.rejected_user',
+                             amount=amount, payment_id=payment_id, reason=reason)
                 )
 
             keyboard = types.InlineKeyboardMarkup()
-            keyboard.add(types.InlineKeyboardButton(get_text(admin_id, 'navigation.back_to_main'), callback_data="back_to_main"))
+            keyboard.add(types.InlineKeyboardButton(
+                get_text(admin_id, 'navigation.back_to_main'),
+                callback_data="back_to_main"
+            ))
             
             self.bot.reply_to(
                 message,
@@ -274,5 +260,5 @@ class CardPayment:
             )
 
         except Exception as e:
-            logging.error(f"Error in process_rejection: {e}")
+            logger.error(f"Error in process_rejection: {e}")
             self.bot.reply_to(message, get_text(message.from_user.id, 'payment.rejection_error'))

@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>نتیجه پرداخت</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Tahoma', 'Segoe UI', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border-radius: 16px;
+            padding: 40px 30px;
+            max-width: 480px;
+            width: 100%;
+            text-align: center;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        .icon {
+            font-size: 64px;
+            margin-bottom: 20px;
+        }
+        .success .icon { color: #10b981; }
+        .error .icon { color: #ef4444; }
+        h1 {
+            font-size: 24px;
+            margin-bottom: 12px;
+            color: #1f2937;
+        }
+        .message {
+            font-size: 16px;
+            color: #6b7280;
+            margin-bottom: 24px;
+            line-height: 1.8;
+        }
+        .details {
+            background: #f9fafb;
+            border-radius: 10px;
+            padding: 16px;
+            margin-bottom: 24px;
+            text-align: right;
+        }
+        .detail-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        .detail-row:last-child { border-bottom: none; }
+        .detail-label { color: #6b7280; font-size: 14px; }
+        .detail-value { color: #1f2937; font-size: 14px; font-weight: bold; }
+        .back-button {
+            display: inline-block;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 32px;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            text-decoration: none;
+            transition: transform 0.2s;
+        }
+        .back-button:hover { transform: scale(1.05); }
+    </style>
+</head>
+<body>
+    <div class="container {% if success %}success{% else %}error{% endif %}">
+        <div class="icon">{% if success %}✅{% else %}❌{% endif %}</div>
+        <h1>{% if success %}پرداخت موفق{% else %}پرداخت ناموفق{% endif %}</h1>
+        <div class="message">
+            {% if success %}
+                پرداخت شما با موفقیت انجام شد و موجودی حساب شما افزایش یافت.
+            {% else %}
+                {{ message or 'خطایی در پردازش پرداخت رخ داده است. لطفا مجددا تلاش کنید.' }}
+            {% endif %}
+        </div>
+        {% if success %}
+        <div class="details">
+            <div class="detail-row">
+                <span class="detail-label">مبلغ:</span>
+                <span class="detail-value">{{ amount }} تومان</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">کد پیگیری:</span>
+                <span class="detail-value">{{ ref_id }}</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">موجودی فعلی:</span>
+                <span class="detail-value">{{ balance }} تومان</span>
+            </div>
+        </div>
+        {% endif %}
+        <a href="https://t.me/HajNumber_Bot" class="back-button">بازگشت به ربات</a>
+    </div>
+</body>
+</html>

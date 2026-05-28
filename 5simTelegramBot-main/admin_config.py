@@ -1,243 +1,114 @@
-import sqlite3
-import json
-from datetime import datetime
+"""
+admin_config.py — Admin Configuration (Enterprise Refactored)
+─────────────────────────────────────────────────
+Now delegates all DB operations to the SettingsRepository.
+No direct sqlite3 connections. All operations are transaction-safe.
+Backward-compatible API for bot.py callers.
+"""
+
 import logging
+from db.repositories.settings_repository import SettingsRepository
+
+logger = logging.getLogger(__name__)
+
 
 class AdminConfig:
+    """Admin configuration manager using enterprise repository layer."""
+
     def __init__(self):
-        self.setup_database()
-    
-    def setup_database(self):
-        try:
-            conn = sqlite3.connect('admin.db')
-            cursor = conn.cursor()
-            
-            # جدول تنظیمات
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS settings (
-                    key TEXT PRIMARY KEY,
-                    value TEXT
-                )
-            ''')
-            
-            # جدول تراکنش‌ها
-            cursor.execute('''CREATE TABLE IF NOT EXISTS transactions
-                        (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                         user_id INTEGER,
-                         amount INTEGER,
-                         type TEXT,
-                         description TEXT,
-                         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
-            
-            # جدول کانال‌های اجباری
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS required_channels (
-                    username TEXT PRIMARY KEY,
-                    display_name TEXT NOT NULL,
-                    invite_link TEXT NOT NULL,
-                    added_date DATETIME DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            
-            # تنظیم مقادیر پیش‌فرض
-            cursor.execute('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)',
-                         ('profit_percentage', '30'))
-            cursor.execute('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)',
-                         ('usd_rate', '0'))
-            cursor.execute('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)',
-                         ('channel_lock', 'false'))
-            
-            conn.commit()
-            conn.close()
-            
-        except Exception as e:
-            logging.error(f"Error in setup_database: {e}")
-    
+        self._repo = SettingsRepository()
+        # Ensure defaults exist (via setup_databases or migration)
+        self._ensure_defaults()
+
+    def _ensure_defaults(self):
+        """Ensure default settings exist."""
+        defaults = {
+            'profit_percentage': '30',
+            'usd_rate': '0',
+            'channel_lock': 'false',
+        }
+        for key, value in defaults.items():
+            if not self._repo.exists(key):
+                self._repo.set(key, value)
+                logger.info(f"Default setting inserted: {key}={value}")
+
     def get_profit_percentage(self):
-        conn = sqlite3.connect('admin.db')
-        c = conn.cursor()
-        c.execute('SELECT value FROM settings WHERE key = ?', ('profit_percentage',))
-        result = c.fetchone()
-        conn.close()
-        return float(result[0]) if result else 30.0
-    
+        val = self._repo.get('profit_percentage')
+        return float(val) if val else 30.0
+
     def set_profit_percentage(self, percentage):
-        conn = sqlite3.connect('admin.db')
-        c = conn.cursor()
-        c.execute('UPDATE settings SET value = ? WHERE key = ?',
-                 (str(percentage), 'profit_percentage'))
-        conn.commit()
-        conn.close()
-    
+        self._repo.set('profit_percentage', str(percentage))
+
     def get_usd_rate(self):
-        conn = sqlite3.connect('admin.db')
-        c = conn.cursor()
-        c.execute('SELECT value FROM settings WHERE key = ?', ('usd_rate',))
-        result = c.fetchone()
-        conn.close()
-        return float(result[0]) if result else 0.0
-    
+        val = self._repo.get('usd_rate')
+        return float(val) if val else 0.0
+
     def set_usd_rate(self, rate):
-        conn = sqlite3.connect('admin.db')
-        c = conn.cursor()
-        c.execute('UPDATE settings SET value = ? WHERE key = ?',
-                 (str(rate), 'usd_rate'))
-        conn.commit()
-        conn.close()
-    
-    def add_transaction(self, user_id, amount, type_trans, description):
-        conn = sqlite3.connect('admin.db')
-        c = conn.cursor()
-        c.execute('''INSERT INTO transactions 
-                    (user_id, amount, type, description)
-                    VALUES (?, ?, ?, ?)''',
-                 (user_id, amount, type_trans, description))
-        conn.commit()
-        conn.close()
-    
+        self._repo.set('usd_rate', str(rate))
+
     def get_transactions(self, limit=10):
-        conn = sqlite3.connect('admin.db')
-        c = conn.cursor()
-        c.execute('''SELECT * FROM transactions 
-                    ORDER BY timestamp DESC LIMIT ?''', (limit,))
-        transactions = c.fetchall()
-        conn.close()
-        return transactions
-    
+        """Get recent transactions via repository."""
+        from db.repositories.transaction_repository import TransactionRepository
+        repo = TransactionRepository()
+        return repo.find_recent(limit)
+
     def get_required_channels(self):
+        """Get all required channels from admin.db."""
         try:
-            conn = sqlite3.connect('admin.db')
-            cursor = conn.cursor()
-            
-            # اضافه کردن logging برای دیباگ
-            logging.info("Fetching channels from database...")
-            
-            cursor.execute('SELECT username, display_name, invite_link FROM required_channels')
-            channels = cursor.fetchall()
-            
-            # اضافه کردن logging برای نمایش نتایج
-            logging.info(f"Raw database result: {channels}")
-            
-            conn.close()
-            
-            # تبدیل نتایج به لیست
+            channels = self._repo.get_required_channels()
             channels_list = []
-            for channel in channels:
+            for row in channels:
                 channels_list.append((
-                    channel[0],  # username
-                    channel[1],  # display_name
-                    channel[2]   # invite_link
+                    row['username'],
+                    row['display_name'],
+                    row['invite_link'],
                 ))
-            
-            logging.info(f"Returning {len(channels_list)} channels: {channels_list}")
+            logger.info(f"Returning {len(channels_list)} channels")
             return channels_list
-            
         except Exception as e:
-            logging.error(f"Error in get_required_channels: {e}")
+            logger.error(f"Error in get_required_channels: {e}")
             return []
-    
+
     def add_required_channel(self, username, display_name, invite_link):
+        """Add a required channel via repository."""
         try:
-            conn = sqlite3.connect('admin.db')
-            cursor = conn.cursor()
-            
-            # حذف @ از ابتدای نام کاربری
-            username = username.replace('@', '')
-            
-            logging.info(f"Adding channel: @{username}, {display_name}, {invite_link}")
-            
-            # بررسی وجود کانال قبل از اضافه کردن
-            cursor.execute('SELECT username FROM required_channels WHERE username = ?', (username,))
-            existing = cursor.fetchone()
-            
-            if existing:
-                # اگر کانال وجود دارد، آپدیت می‌کنیم
-                cursor.execute('''
-                    UPDATE required_channels 
-                    SET display_name = ?, invite_link = ?
-                    WHERE username = ?
-                ''', (display_name, invite_link, username))
-                logging.info(f"Updated existing channel @{username}")
-            else:
-                # اگر کانال جدید است، اضافه می‌کنیم
-                cursor.execute('''
-                    INSERT INTO required_channels 
-                    (username, display_name, invite_link) 
-                    VALUES (?, ?, ?)
-                ''', (username, display_name, invite_link))
-                logging.info(f"Inserted new channel @{username}")
-            
-            conn.commit()
-            
-            # بررسی نتیجه
-            cursor.execute('SELECT * FROM required_channels WHERE username = ?', (username,))
-            result = cursor.fetchone()
-            
-            conn.close()
-            
-            if result:
-                logging.info(f"Successfully added/updated channel @{username}")
-                return True
-            else:
-                logging.error(f"Failed to add channel @{username}")
-                return False
-                
+            return self._repo.add_channel(username, display_name, invite_link)
         except Exception as e:
-            logging.error(f"Error in add_required_channel: {e}")
+            logger.error(f"Error in add_required_channel: {e}")
             return False
-    
+
     def remove_required_channel(self, username):
+        """Remove a required channel via repository."""
         try:
-            conn = sqlite3.connect('admin.db')
-            cursor = conn.cursor()
-            
-            # حذف @ از ابتدای نام کاربری اگر وجود داشت
-            username = username.replace('@', '')
-            
-            cursor.execute('DELETE FROM required_channels WHERE username = ?', (username,))
-            conn.commit()
-            
-            # بررسی اینکه آیا کانال واقعاً حذف شده
-            cursor.execute('SELECT * FROM required_channels WHERE username = ?', (username,))
-            result = cursor.fetchone()
-            
-            conn.close()
-            
-            if not result:
-                logging.info(f"Channel @{username} removed successfully")
-                return True
-            else:
-                logging.error(f"Failed to remove channel @{username}")
-                return False
-                
+            return self._repo.remove_channel(username)
         except Exception as e:
-            logging.error(f"Error in remove_required_channel: {e}")
+            logger.error(f"Error in remove_required_channel: {e}")
             return False
-    
+
     def get_lock_status(self):
+        """Check if channel lock is enabled."""
         try:
-            conn = sqlite3.connect('admin.db')
-            cursor = conn.cursor()
-            cursor.execute('SELECT value FROM settings WHERE key = "channel_lock"')
-            result = cursor.fetchone()
-            conn.close()
-            
-            return result[0].lower() == 'true' if result else False
-            
+            val = self._repo.get('channel_lock')
+            return val == 'true' if val else False
         except Exception as e:
-            logging.error(f"Error in get_lock_status: {e}")
+            logger.error(f"Error in get_lock_status: {e}")
             return False
-    
+
     def set_lock_status(self, status):
+        """Enable/disable channel lock."""
         try:
-            conn = sqlite3.connect('admin.db')
-            cursor = conn.cursor()
-            cursor.execute('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
-                         ('channel_lock', str(status).lower()))
-            conn.commit()
-            conn.close()
-            return True
-            
+            return self._repo.set('channel_lock', str(status).lower())
         except Exception as e:
-            logging.error(f"Error in set_lock_status: {e}")
-            return False 
+            logger.error(f"Error in set_lock_status: {e}")
+            return False
+
+    # ── Legacy backward-compat (deprecated, kept for bot.py migration) ──
+    def setup_database(self):
+        """No-op: database setup is handled by migrations now."""
+        pass
+
+    def add_transaction(self, user_id, amount, type_trans, description):
+        """Add transaction via repository."""
+        from db.repositories.transaction_repository import TransactionRepository
+        repo = TransactionRepository()
+        repo.create(user_id, amount, type_trans, description)

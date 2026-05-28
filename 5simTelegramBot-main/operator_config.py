@@ -1,82 +1,63 @@
-import sqlite3
+"""
+operator_config.py — Operator Configuration (Enterprise Refactored)
+─────────────────────────────────────────────────
+Now delegates ALL operations to SettingsRepository.
+No direct sqlite3 connections.
+"""
+
 import logging
+from db.repositories.settings_repository import SettingsRepository
 from data.service_countries import get_all_service_countries
 
+logger = logging.getLogger(__name__)
+
+
 class OperatorConfig:
+    """Operator configuration manager using enterprise repository layer."""
+
     def __init__(self):
-        self.setup_database()
-        
-    def setup_database(self):
+        self._repo = SettingsRepository()
+        self._ensure_defaults()
+
+    def _ensure_defaults(self):
+        """Seed default operator settings from the Single Source of Truth."""
         try:
-            conn = sqlite3.connect('admin.db')
-            cursor = conn.cursor()
-            
-            # ایجاد جدول تنظیمات اپراتور با ساختار جدید
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS operator_settings (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    service TEXT NOT NULL,
-                    country TEXT NOT NULL,
-                    operator TEXT NOT NULL,
-                    country_name TEXT NOT NULL,
-                    UNIQUE(service, country)
-                )
-            ''')
-            
-            # تنظیمات از المصدر الموحد (Single Source of Truth)
             default_settings = get_all_service_countries()
-            
-            # اضافه کردن تنظیمات جدید
-            cursor.executemany('''
-                INSERT OR REPLACE INTO operator_settings (service, country, operator, country_name)
-                VALUES (?, ?, ?, ?)
-            ''', default_settings)
-            
-            conn.commit()
-            conn.close()
-            logging.info("Operator settings database updated successfully")
-            
+            for service, country, operator, country_name in default_settings:
+                if not self._repo.get_operator(service, country):
+                    self._repo.set_operator(service, country, operator, country_name)
+            logger.info("Operator settings seeded from SSOT")
         except Exception as e:
-            logging.error(f"Error in setup_database: {e}")
-            
+            logger.error(f"Error seeding operator defaults: {e}")
+
     def get_operator_info(self, service, country):
+        """Get operator and country name for a service+country pair."""
         try:
-            conn = sqlite3.connect('admin.db')
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT operator, country_name FROM operator_settings 
-                WHERE service = ? AND country = ?
-            ''', (service, country))
-            result = cursor.fetchone()
-            conn.close()
-            return result if result else (None, None)
+            result = self._repo.get_operator(service, country)
+            if result:
+                return (result['operator'], result['country_name'])
+            return (None, None)
         except Exception as e:
-            logging.error(f"Error in get_operator_info: {e}")
-            return None, None
-            
+            logger.error(f"Error in get_operator_info: {e}")
+            return (None, None)
+
     def set_operator(self, service, country, operator, country_name):
+        """Set operator for a service+country pair."""
         try:
-            conn = sqlite3.connect('admin.db')
-            cursor = conn.cursor()
-            cursor.execute('''
-                INSERT OR REPLACE INTO operator_settings (service, country, operator, country_name)
-                VALUES (?, ?, ?, ?)
-            ''', (service, country, operator, country_name))
-            conn.commit()
-            conn.close()
-            return True
+            return self._repo.set_operator(service, country, operator, country_name)
         except Exception as e:
-            logging.error(f"Error in set_operator: {e}")
+            logger.error(f"Error in set_operator: {e}")
             return False
-            
+
     def get_all_settings(self):
+        """Get all operator settings."""
         try:
-            conn = sqlite3.connect('admin.db')
-            cursor = conn.cursor()
-            cursor.execute('SELECT service, country, operator, country_name FROM operator_settings')
-            settings = cursor.fetchall()
-            conn.close()
-            return settings
+            return self._repo.get_all_operators()
         except Exception as e:
-            logging.error(f"Error in get_all_settings: {e}")
-            return [] 
+            logger.error(f"Error in get_all_settings: {e}")
+            return []
+
+    # ── Legacy backward-compat ──
+    def setup_database(self):
+        """No-op: handled by SettingsRepository."""
+        self._ensure_defaults()

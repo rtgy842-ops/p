@@ -56,8 +56,12 @@ locale.setlocale(locale.LC_ALL, '')
 # WEBHOOK_URL = 'https://082a-209-38-109-245.ngrok-free.app'
 
 bot = telebot.TeleBot(BOT_CONFIG['token'])
-app = Flask(__name__, static_folder='static')
-app.register_blueprint(order_details_bp)  # ثبت Blueprint مسیرهای جزئیات سفارش
+app = Flask(__name__, static_folder='static', template_folder='templates')
+
+# Register all blueprints (enterprise architecture)
+app.register_blueprint(order_details_bp)
+from web.health import health_bp
+app.register_blueprint(health_bp)
 
 # تنظیمات logging — Docker-friendly: logs to stdout (captured by Docker)
 import sys
@@ -76,53 +80,9 @@ logger.addHandler(console_handler)
 # تنظیم ادمین
 admin_config = AdminConfig()
 
-# ایجاد دیتابیس
-def setup_database():
-    try:
-        conn = sqlite3.connect(DB_CONFIG['users_db'])
-        cursor = conn.cursor()
-
-        # ایجاد جدول users اگر وجود ندارد
-        cursor.execute('''CREATE TABLE IF NOT EXISTS users
-            (user_id INTEGER PRIMARY KEY,
-             balance INTEGER DEFAULT 0)''')
-
-        # ایجاد جدول orders اگر وجود ندارد
-        cursor.execute('''CREATE TABLE IF NOT EXISTS orders
-            (id INTEGER PRIMARY KEY AUTOINCREMENT,
-             user_id INTEGER,
-             phone_number TEXT,
-             service TEXT,
-             country TEXT,
-             price INTEGER,
-             order_id TEXT UNIQUE,
-             status TEXT DEFAULT 'active',
-             order_date DATETIME DEFAULT CURRENT_TIMESTAMP,
-             FOREIGN KEY (user_id) REFERENCES users(user_id))''')
-
-        conn.commit()
-        conn.close()
-        logging.info("✅ دیتابیس با موفقیت راه‌اندازی شد")
-        return True
-    except Exception as e:
-        logging.error(f"❌ خطا در راه‌اندازی دیتابیس: {e}")
-        return False
-
-def setup_admin_database():
-    try:
-        conn = sqlite3.connect(DB_CONFIG['admin_db'])
-        cursor = conn.cursor()
-        
-        # ایجاد جدول اطلاعات کارت
-        cursor.execute('''CREATE TABLE IF NOT EXISTS card_info
-            (id INTEGER PRIMARY KEY AUTOINCREMENT,
-             card_number TEXT,
-             card_holder TEXT)''')
-             
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        logging.error(f"Error in setup_admin_database: {e}")
+# ── Database setup is handled by migrations at startup ──
+# Legacy setup_database() and setup_admin_database() removed.
+# All tables created via db/schema.py + db/migrations.py.
 
 # توابع مدیریت موجودی کاربر از database.py import شده‌اند (get_user_balance, add_balance)
 
@@ -3643,54 +3603,52 @@ def test_api_key():
             'message': f'خطا در تست کلید API: {str(e)}'
         })
 
-# در بخش if __name__ == '__main__':
+# ── Enterprise Startup ───────────────────────────────────────
 if __name__ == '__main__':
     try:
-        # ایجاد جداول مورد نیاز
-        if not create_required_tables():
-            logging.error("❌ خطا در ایجاد جداول مورد نیاز")
-            exit(1)
-            
-        # راه‌اندازی دیتابیس و بازیابی موجودی‌ها
-        if not setup_database():
-            logging.error("❌ خطا در راه‌اندازی دیتابیس")
-            exit(1)
-            
-        # بازیابی اطلاعات از فایل پشتیبان
+        # 1. Initialize database via enterprise ConnectionManager
+        from database import setup_databases
+        setup_databases()
+        logging.info("✅ Databases initialized via ConnectionManager")
+
+        # 2. Run migrations
+        from db.migrations import MigrationManager
+        mm = MigrationManager()
+        if mm.migrate():
+            logging.info("✅ Migrations applied successfully")
+        else:
+            logging.warning("⚠️ Migration had issues — continuing")
+
+        # 3. Restore from backup if exists
         backup_file = 'data/users_backup.json'
         if os.path.exists(backup_file):
+            from db.repositories.user_repository import UserRepository
+            repo = UserRepository()
             with open(backup_file, 'r', encoding='utf-8') as f:
                 users_data = json.load(f)
-                
-            conn = sqlite3.connect(DB_CONFIG['users_db'])
-            cursor = conn.cursor()
-            
             for user_id, balance in users_data.items():
-                cursor.execute('''
-                    INSERT OR REPLACE INTO users (user_id, balance)
-                    VALUES (?, ?)
-                ''', (int(user_id), balance))
-            
-            conn.commit()
-            conn.close()
-            logging.info(f"✅ موجودی {len(users_data)} کاربر از فایل پشتیبان بازیابی شد")
-        
-        # شروع سرویس پشتیبان‌گیری
+                repo.create_if_not_exists(int(user_id))
+                repo.add_balance(int(user_id), int(balance))
+            logging.info(f"✅ Restored {len(users_data)} users from backup")
+
+        # 4. Start backup service
         backup_manager = BackupManager(backup_interval=5)
         backup_manager.start()
-        
-        # راه‌اندازی ربات
+        logging.info("✅ Backup service started")
+
+        # 5. Set webhook and start Flask
         bot.remove_webhook()
         bot.set_webhook(url=BOT_CONFIG['webhook_url'])
-        
+        logging.info(f"✅ Webhook set to {BOT_CONFIG['webhook_url']}")
+
         app.run(
             host='0.0.0.0',
             port=5000,
             debug=False
         )
-        
+
     except Exception as e:
-        logging.error(f"Error in main: {e}")
+        logging.error(f"❌ Fatal startup error: {e}", exc_info=True)
         exit(1)
 
 @bot.callback_query_handler(func=lambda call: call.data == "no_operator")

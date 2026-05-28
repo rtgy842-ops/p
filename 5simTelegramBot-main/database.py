@@ -1,221 +1,138 @@
-import sqlite3
-from config import DB_CONFIG
+"""
+database.py — Core Database Operations Layer
+─────────────────────────────────────────────────
+ALL database operations use the ConnectionManager singleton.
+No direct sqlite3.connect() calls anywhere in this file.
+Database setup is done via db/schema.py + migrations.
+
+This file provides backward-compatible functions for legacy callers
+that now delegate to the enterprise repository layer.
+"""
+
 import logging
-from datetime import datetime
+from db.connection import ConnectionManager
+from db.repositories.user_repository import UserRepository
+from db.repositories.transaction_repository import TransactionRepository
+from db.repositories.settings_repository import SettingsRepository
+from config import DB_CONFIG
+
+logger = logging.getLogger(__name__)
+
 
 def setup_databases():
-    setup_users_database()
-    setup_admin_database()
-    setup_orders_database()
+    """Initialize all database schemas via ConnectionManager."""
+    try:
+        from db.schema import ALL_SCHEMAS, DEFAULT_SETTINGS, INDEXES
+        cm = ConnectionManager.get_instance()
+
+        # Create all tables across all databases
+        for db_name, tables in ALL_SCHEMAS.items():
+            conn = cm.get_connection(db_name)
+            cursor = conn.cursor()
+            for table_name, ddl in tables.items():
+                try:
+                    cursor.execute(ddl)
+                    logger.debug(f"Table ensured: {db_name}.{table_name}")
+                except Exception as e:
+                    logger.error(f"Failed to create table {db_name}.{table_name}: {e}")
+            conn.commit()
+
+        # Insert default settings
+        repo = SettingsRepository()
+        for key, value in DEFAULT_SETTINGS:
+            if not repo.exists(key):
+                repo.set(key, value)
+                logger.info(f"Default setting inserted: {key}={value}")
+
+        # Create indexes
+        for db_name, idx_list in INDEXES.items():
+            conn = cm.get_connection(db_name)
+            cursor = conn.cursor()
+            for idx_sql in idx_list:
+                try:
+                    cursor.execute(idx_sql)
+                except Exception as e:
+                    logger.warning(f"Index may already exist in {db_name}: {e}")
+            conn.commit()
+
+        logger.info("All databases initialized via ConnectionManager")
+        return True
+    except Exception as e:
+        logger.error(f"Database setup failed: {e}")
+        return False
+
 
 def setup_users_database():
-    try:
-        conn = sqlite3.connect(DB_CONFIG['users_db'])
-        cursor = conn.cursor()
+    """Create users_db tables via ConnectionManager."""
+    setup_databases()
 
-        # جدول کاربران
-        cursor.execute('''CREATE TABLE IF NOT EXISTS users
-            (user_id INTEGER PRIMARY KEY,
-             username TEXT,
-             first_name TEXT,
-             last_name TEXT,
-             join_date DATETIME DEFAULT CURRENT_TIMESTAMP,
-             balance INTEGER DEFAULT 0,
-             is_blocked INTEGER DEFAULT 0,
-             language TEXT DEFAULT 'fa')''')
-        
-        # مهاجرت: اضافه کردن ستون language به دیتابیس‌های موجود
-        try:
-            cursor.execute('ALTER TABLE users ADD COLUMN language TEXT DEFAULT "fa"')
-        except sqlite3.OperationalError:
-            pass  # ستون از قبل وجود دارد
-
-        # ایجاد جدول جدید با ساختار صحیح (بدون حذف داده‌های قبلی)
-        cursor.execute('''CREATE TABLE transactions
-            (id INTEGER PRIMARY KEY AUTOINCREMENT,
-             user_id INTEGER,
-             amount INTEGER,
-             type TEXT,
-             description TEXT,
-             ref_id TEXT,
-             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-             FOREIGN KEY (user_id) REFERENCES users(user_id))''')
-
-        # جدول پرداخت‌های کارت به کارت
-        cursor.execute('''CREATE TABLE IF NOT EXISTS card_payments
-            (payment_id TEXT PRIMARY KEY,
-             user_id INTEGER,
-             amount INTEGER,
-             status TEXT DEFAULT 'pending',
-             receipt TEXT,
-             admin_response TEXT,
-             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-             FOREIGN KEY (user_id) REFERENCES users(user_id))''')
-
-        conn.commit()
-        conn.close()
-        logging.info("Users database setup completed")
-        return True
-    except Exception as e:
-        logging.error(f"Error in setup_users_database: {e}")
-        return False
 
 def setup_admin_database():
-    try:
-        conn = sqlite3.connect(DB_CONFIG['admin_db'])
-        cursor = conn.cursor()
+    """Create admin_db tables via ConnectionManager."""
+    setup_databases()
 
-        # جدول تنظیمات کارت بانکی
-        cursor.execute('''CREATE TABLE IF NOT EXISTS card_info
-            (id INTEGER PRIMARY KEY AUTOINCREMENT,
-             card_number TEXT,
-             card_holder TEXT,
-             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)''')
-
-        # جدول تنظیمات عمومی
-        cursor.execute('''CREATE TABLE IF NOT EXISTS settings
-            (key TEXT PRIMARY KEY,
-             value TEXT,
-             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)''')
-
-        conn.commit()
-        conn.close()
-        logging.info("Admin database setup completed")
-    except Exception as e:
-        logging.error(f"Error in setup_admin_database: {e}")
 
 def setup_orders_database():
-    try:
-        conn = sqlite3.connect(DB_CONFIG['users_db'])
-        cursor = conn.cursor()
+    """Create orders tables via ConnectionManager."""
+    setup_databases()
 
-        # جدول سفارش‌ها
-        cursor.execute('''CREATE TABLE IF NOT EXISTS orders
-            (id INTEGER PRIMARY KEY AUTOINCREMENT,
-             user_id INTEGER,
-             service TEXT,
-             country TEXT,
-             phone_number TEXT,
-             price INTEGER,
-             status TEXT,
-             order_id TEXT UNIQUE,
-             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-             FOREIGN KEY (user_id) REFERENCES users(user_id))''')
-
-        conn.commit()
-        conn.close()
-        logging.info("Orders database setup completed")
-    except Exception as e:
-        logging.error(f"Error in setup_orders_database: {e}")
 
 def get_user_balance(user_id):
+    """Get user balance via repository layer."""
     try:
-        conn = sqlite3.connect(DB_CONFIG['users_db'])
-        cursor = conn.cursor()
-        cursor.execute('SELECT balance FROM users WHERE user_id = ?', (user_id,))
-        result = cursor.fetchone()
-        conn.close()
-        
-        if result:
-            return result[0]
-        return 0
+        repo = UserRepository()
+        return repo.get_balance(user_id)
     except Exception as e:
-        logging.error(f"Error in get_user_balance: {e}")
+        logger.error(f"Error in get_user_balance: {e}")
         return 0
+
 
 def add_balance(user_id, amount):
+    """Add balance via repository layer. Transaction-safe."""
     try:
-        conn = sqlite3.connect(DB_CONFIG['users_db'])
-        cursor = conn.cursor()
-        
-        # بررسی وجود کاربر
-        cursor.execute('SELECT balance FROM users WHERE user_id = ?', (user_id,))
-        user = cursor.fetchone()
-        
-        if user is None:
-            # ایجاد کاربر جدید
-            cursor.execute('INSERT INTO users (user_id, balance) VALUES (?, ?)', (user_id, amount))
-            new_balance = amount
-        else:
-            # بروزرسانی موجودی
-            new_balance = user[0] + amount
-            cursor.execute('UPDATE users SET balance = ? WHERE user_id = ?', (new_balance, user_id))
-        
-        conn.commit()
-        conn.close()
-        
-        logging.info(f"Balance updated for user {user_id}. New balance: {new_balance}")
-        return new_balance
+        repo = UserRepository()
+        return repo.add_balance(user_id, amount)
     except Exception as e:
-        logging.error(f"Error in add_balance: {e}", exc_info=True)
+        logger.error(f"Error in add_balance: {e}", exc_info=True)
         return None
+
 
 def save_transaction(user_id, amount, type_trans, description, ref_id=None):
+    """Record a transaction via repository layer. Transaction-safe."""
     try:
-        conn = sqlite3.connect(DB_CONFIG['users_db'])
-        cursor = conn.cursor()
-        
-        # ثبت تراکنش
-        cursor.execute('''
-            INSERT INTO transactions (user_id, amount, type, description, ref_id)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (user_id, amount, type_trans, description, ref_id))
-        
-        conn.commit()
-        conn.close()
-        
-        logging.info(f"Transaction saved successfully: user_id={user_id}, amount={amount}, type={type_trans}")
-        return True
-        
-    except sqlite3.Error as e:
-        logging.error(f"Database error in save_transaction: {e}")
-        return False
+        repo = TransactionRepository()
+        txn_id = repo.create(user_id, amount, type_trans, description, ref_id)
+        return txn_id is not None
     except Exception as e:
-        logging.error(f"Error in save_transaction: {e}")
+        logger.error(f"Error in save_transaction: {e}")
         return False
+
 
 def get_card_info():
+    """Get bank card info from admin.db."""
     try:
-        conn = sqlite3.connect(DB_CONFIG['admin_db'])
-        cursor = conn.cursor()
-        cursor.execute('SELECT card_number, card_holder FROM card_info ORDER BY id DESC LIMIT 1')
-        result = cursor.fetchone()
-        conn.close()
-        return result
+        repo = SettingsRepository()
+        return repo.get_card_info()
     except Exception as e:
-        logging.error(f"Error in get_card_info: {e}")
+        logger.error(f"Error in get_card_info: {e}")
         return None
 
+
 def add_test_transaction():
+    """Add a test transaction (for debugging)."""
     try:
-        conn = sqlite3.connect('admin.db')
-        c = conn.cursor()
-        c.execute('''INSERT INTO transactions 
-                    (user_id, amount, type, description)
-                    VALUES (?, ?, ?, ?)''',
-                 (123456, 100000, 'purchase', 'تست تراکنش'))
-        conn.commit()
-        conn.close()
-        logging.info("تراکنش تست با موفقیت اضافه شد")
+        repo = TransactionRepository()
+        repo.create(123456, 100000, 'purchase', 'Test transaction')
+        logger.info("Test transaction added")
     except Exception as e:
-        logging.error(f"خطا در اضافه کردن تراکنش تست: {e}")
+        logger.error(f"Error adding test transaction: {e}")
+
 
 def save_user_phone(user_id, phone):
+    """Save user phone number via repository."""
     try:
-        conn = sqlite3.connect('users.db')
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            INSERT INTO users (user_id, phone) 
-            VALUES (?, ?)
-            ON CONFLICT (user_id) 
-            DO UPDATE SET phone = ?
-        """, (user_id, phone, phone))
-        
-        conn.commit()
-        cursor.close()
-        conn.close()
-        return True
+        repo = UserRepository()
+        return repo.save_phone(user_id, phone)
     except Exception as e:
-        logging.error(f"Error saving phone number: {e}")
-        return False 
+        logger.error(f"Error saving phone number: {e}")
+        return False

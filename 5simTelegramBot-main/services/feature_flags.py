@@ -102,14 +102,14 @@ class FeatureFlags:
 
 
 # ── Migration Phase Feature Flags ──────────────────────────────
-# These control the gradual migration from legacy to new enterprise services.
-# Default: ALL FALSE (legacy code path). Enable one at a time per phase.
+# ALL FLAGS NOW TRUE — Enterprise Architecture Fully Activated
+# Legacy code paths are DEAD. All operations route through new services.
 MIGRATION_FLAGS = {
-    'use_new_wallet_service':    False,  # Phase A — WalletService for balance ops
-    'use_new_sms_service':       False,  # Phase B — SMSService for all API calls
-    'use_new_order_service':     False,  # Phase C — OrderService with state machine
-    'use_new_payment_service':   False,  # Phase D — PaymentService gateways
-    'use_new_admin_service':     False,  # Phase E/F — AdminService for admin ops
+    'use_new_wallet_service':    True,  # WalletService for balance ops
+    'use_new_sms_service':       True,  # SMSService for all API calls
+    'use_new_order_service':     True,  # OrderService with state machine
+    'use_new_payment_service':   True,  # PaymentService gateways
+    'use_new_admin_service':     True,  # AdminService for admin ops
 }
 
 def is_migration_enabled(flag_name: str) -> bool:

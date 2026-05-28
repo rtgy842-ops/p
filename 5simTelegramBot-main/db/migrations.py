@@ -1,22 +1,25 @@
 """
-db/migrations.py — Versioned Migration System
+db/migrations.py — Versioned Migration System (Enterprise)
 ─────────────────────────────────────────────────
-Simple, safe, logged migration system for SQLite.
-Each migration has a version number, forward (up) and reverse (down) SQL.
+Complete migration system covering ALL tables.
+Each migration is versioned, logged, and reversible.
 
-Rules:
-- Version numbers are sequential integers starting at 1
-- Each migration is applied exactly once
-- Applied migrations are tracked in a _migrations table
-- Reversible: each migration has a 'down' SQL
-- Safe: no migration is applied twice
-- Logged: every migration is logged with timestamp
+Tables covered:
+- users (with balance, language, phone, is_blocked)
+- transactions (financial audit trail)
+- orders (number purchases)
+- card_payments (card-to-card payments)
+- settings (key-value config)
+- card_info (bank card info for payments)
+- required_channels (mandatory join channels)
+- operator_settings (SMS operator config)
+- activation_codes (received SMS codes)
+- _migrations (self-tracking table)
 
 Usage:
     from db.migrations import MigrationManager
     mm = MigrationManager()
     mm.migrate()  # applies all pending migrations
-    mm.rollback(1)  # rolls back to version 0
 """
 
 import sqlite3
@@ -27,10 +30,8 @@ from config import DB_CONFIG
 logger = logging.getLogger(__name__)
 
 # ── Migration definitions ──────────────────────────────────────
-# Format: (version, description, up_sql, down_sql)
-
 MIGRATIONS: list[tuple[int, str, str | list[str], str | list[str]]] = [
-    # Version 0: Baseline — ensure _migrations table exists
+    # Version 0: Baseline — _migrations tracking table
     (
         0,
         'Create migrations tracking table',
@@ -44,43 +45,243 @@ MIGRATIONS: list[tuple[int, str, str | list[str], str | list[str]]] = [
         ''',
         'DROP TABLE IF EXISTS _migrations'
     ),
-    # Version 1: Add indexes for performance
+
+    # ── users_db tables ────────────────────────────────────────
     (
         1,
-        'Add performance indexes to transactions and orders',
+        'Create users table with all columns',
+        '''
+        CREATE TABLE IF NOT EXISTS users (
+            user_id       INTEGER PRIMARY KEY,
+            username      TEXT,
+            first_name    TEXT,
+            last_name     TEXT,
+            join_date     DATETIME DEFAULT CURRENT_TIMESTAMP,
+            balance       INTEGER DEFAULT 0,
+            is_blocked    INTEGER DEFAULT 0,
+            language      TEXT DEFAULT 'fa',
+            phone         TEXT
+        )
+        ''',
+        'DROP TABLE IF EXISTS users'
+    ),
+    (
+        2,
+        'Create transactions table (financial audit)',
+        '''
+        CREATE TABLE IF NOT EXISTS transactions (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id     INTEGER NOT NULL,
+            amount      INTEGER NOT NULL,
+            type        TEXT NOT NULL,
+            description TEXT DEFAULT '',
+            ref_id      TEXT,
+            timestamp   DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(user_id)
+        )
+        ''',
+        'DROP TABLE IF EXISTS transactions'
+    ),
+    (
+        3,
+        'Create orders table (purchase records)',
+        '''
+        CREATE TABLE IF NOT EXISTS orders (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id         INTEGER NOT NULL,
+            service         TEXT,
+            country         TEXT,
+            phone_number    TEXT,
+            price           INTEGER,
+            status          TEXT DEFAULT 'active',
+            order_id        TEXT UNIQUE,
+            order_date      DATETIME DEFAULT CURRENT_TIMESTAMP,
+            created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(user_id)
+        )
+        ''',
+        'DROP TABLE IF EXISTS orders'
+    ),
+    (
+        4,
+        'Create card_payments table (card-to-card payments)',
+        '''
+        CREATE TABLE IF NOT EXISTS card_payments (
+            payment_id      TEXT PRIMARY KEY,
+            user_id         INTEGER NOT NULL,
+            amount          INTEGER NOT NULL,
+            status          TEXT DEFAULT 'pending',
+            receipt         TEXT,
+            admin_response  TEXT,
+            created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(user_id)
+        )
+        ''',
+        'DROP TABLE IF EXISTS card_payments'
+    ),
+
+    # ── admin_db tables ────────────────────────────────────────
+    (
+        5,
+        'Create admin_settings table',
+        '''
+        CREATE TABLE IF NOT EXISTS settings (
+            key         TEXT PRIMARY KEY,
+            value       TEXT,
+            updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        ''',
+        'DROP TABLE IF EXISTS settings'
+    ),
+    (
+        6,
+        'Create admin_card_info table',
+        '''
+        CREATE TABLE IF NOT EXISTS card_info (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            card_number  TEXT,
+            card_holder  TEXT,
+            updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        ''',
+        'DROP TABLE IF EXISTS card_info'
+    ),
+    (
+        7,
+        'Create required_channels table',
+        '''
+        CREATE TABLE IF NOT EXISTS required_channels (
+            username      TEXT PRIMARY KEY,
+            display_name  TEXT NOT NULL,
+            invite_link   TEXT NOT NULL,
+            added_date    DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        ''',
+        'DROP TABLE IF EXISTS required_channels'
+    ),
+    (
+        8,
+        'Create operator_settings table',
+        '''
+        CREATE TABLE IF NOT EXISTS operator_settings (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            service       TEXT NOT NULL,
+            country       TEXT NOT NULL,
+            operator      TEXT NOT NULL,
+            country_name  TEXT NOT NULL,
+            UNIQUE(service, country)
+        )
+        ''',
+        'DROP TABLE IF EXISTS operator_settings'
+    ),
+
+    # ── bot_db tables ──────────────────────────────────────────
+    (
+        9,
+        'Create bot_orders table',
+        '''
+        CREATE TABLE IF NOT EXISTS orders (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id         INTEGER NOT NULL,
+            activation_id   INTEGER NOT NULL,
+            service         TEXT NOT NULL,
+            country         TEXT NOT NULL,
+            operator        TEXT NOT NULL,
+            phone           TEXT NOT NULL,
+            price           INTEGER NOT NULL,
+            status          TEXT NOT NULL DEFAULT 'PENDING',
+            created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        ''',
+        'DROP TABLE IF EXISTS orders'
+    ),
+    (
+        10,
+        'Create activation_codes table',
+        '''
+        CREATE TABLE IF NOT EXISTS activation_codes (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_id    INTEGER NOT NULL,
+            code        TEXT NOT NULL,
+            status      TEXT,
+            created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (order_id) REFERENCES orders(id)
+        )
+        ''',
+        'DROP TABLE IF EXISTS activation_codes'
+    ),
+    (
+        11,
+        'Create bot_settings table',
+        '''
+        CREATE TABLE IF NOT EXISTS settings (
+            key    TEXT PRIMARY KEY,
+            value  TEXT NOT NULL
+        )
+        ''',
+        'DROP TABLE IF EXISTS settings'
+    ),
+
+    # ── Default settings seeding ───────────────────────────────
+    (
+        12,
+        'Insert default settings (usd_rate, profit, channel_lock)',
+        [
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('usd_rate', '0')",
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('profit_percentage', '30')",
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('channel_lock', 'false')",
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('usd_rate', '0')",
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('profit_percentage', '30')",
+        ],
+        "DELETE FROM settings WHERE key IN ('usd_rate', 'profit_percentage', 'channel_lock')"
+    ),
+
+    # ── Performance indexes ────────────────────────────────────
+    (
+        13,
+        'Add performance indexes',
         [
             'CREATE INDEX IF NOT EXISTS idx_transactions_user_id ON transactions(user_id)',
             'CREATE INDEX IF NOT EXISTS idx_transactions_timestamp ON transactions(timestamp)',
             'CREATE INDEX IF NOT EXISTS idx_orders_user_id ON orders(user_id)',
             'CREATE INDEX IF NOT EXISTS idx_orders_order_id ON orders(order_id)',
+            'CREATE INDEX IF NOT EXISTS idx_card_payments_user_id ON card_payments(user_id)',
+            'CREATE INDEX IF NOT EXISTS idx_card_payments_status ON card_payments(status)',
         ],
         [
             'DROP INDEX IF EXISTS idx_transactions_user_id',
             'DROP INDEX IF EXISTS idx_transactions_timestamp',
             'DROP INDEX IF EXISTS idx_orders_user_id',
             'DROP INDEX IF EXISTS idx_orders_order_id',
+            'DROP INDEX IF EXISTS idx_card_payments_user_id',
+            'DROP INDEX IF EXISTS idx_card_payments_status',
         ]
     ),
-    # Version 2: Add language column to users (if missing)
+
+    # ── Migration: add language column to existing users ───────
     (
-        2,
-        'Ensure language column exists on users table',
+        14,
+        'Add language column to users (if upgrading from old schema)',
         "ALTER TABLE users ADD COLUMN language TEXT DEFAULT 'fa'",
-        # SQLite doesn't support DROP COLUMN easily; this is a no-op reverse
         "SELECT 1"
     ),
-    # Version 3: Add phone column to users
     (
-        3,
-        'Ensure phone column exists on users table',
+        15,
+        'Add phone column to users',
         'ALTER TABLE users ADD COLUMN phone TEXT',
+        'SELECT 1'
+    ),
+    (
+        16,
+        'Add created_at column to orders',
+        "ALTER TABLE orders ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP",
         'SELECT 1'
     ),
 ]
 
 
 class MigrationManager:
-    """Manages database schema migrations."""
+    """Manages database schema migrations across all databases."""
 
     def __init__(self):
         self._cm = None  # Lazy init
@@ -148,10 +349,7 @@ class MigrationManager:
         return True
 
     def rollback(self, target_version: int) -> bool:
-        """
-        Rollback migrations down to target_version.
-        Applies 'down' SQL in reverse order.
-        """
+        """Rollback migrations down to target_version."""
         current = self.get_current_version()
         if current <= target_version:
             logger.info(f"No rollback needed. Current: {current}, Target: {target_version}")
@@ -167,12 +365,11 @@ class MigrationManager:
             try:
                 logger.info(f"Reverting migration {version}: {description}")
                 self._execute_sql(down_sql)
-                with self.conn:
-                    cursor = self.conn.cursor()
-                    cursor.execute(
-                        'DELETE FROM _migrations WHERE version = ?', (version,)
-                    )
-                    self.conn.commit()
+                cursor = self.conn.cursor()
+                cursor.execute(
+                    'DELETE FROM _migrations WHERE version = ?', (version,)
+                )
+                self.conn.commit()
                 logger.info(f"Migration {version} reverted successfully")
             except Exception as e:
                 logger.error(f"Rollback {version} FAILED: {e}")
@@ -201,7 +398,8 @@ class MigrationManager:
         try:
             cursor.execute('BEGIN')
             for stmt in statements:
-                if stmt.strip() and stmt.strip().upper() != 'SELECT 1':
+                stmt = stmt.strip()
+                if stmt and stmt.upper() != 'SELECT 1':
                     cursor.execute(stmt)
             self.conn.commit()
         except Exception:

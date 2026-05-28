@@ -1,5 +1,6 @@
-# ── docker-compose.yml — Multi-Service Architecture ────────
-# Services: nginx (reverse proxy) → bot + redis (+ optional worker/beat)
+# ── docker-compose.yml — Multi-Service Enterprise Architecture ────────
+# Services: nginx (reverse proxy) → bot + redis + worker + beat
+# All containers on internal network. Health checks for dependency ordering.
 # Start with: docker compose up -d
 
 x-common: &common
@@ -22,8 +23,17 @@ services:
       # SSL certs (mount your own)
       # - ./certs:/etc/nginx/certs:ro
     depends_on:
-      - bot
+      bot:
+        condition: service_healthy
+    networks:
+      - internal
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://bot:5000/ping"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 25s
 
   # ── Bot: Main Telegram Bot + Flask Webhook ─────────────────
   bot:
@@ -43,7 +53,8 @@ services:
     volumes:
       - bot_data:/app/data
       - bot_logs:/app/logs
-    command: python bot.py
+    entrypoint: ["./docker-entrypoint.sh"]
+    command: ["python", "bot.py"]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/ping"]
       interval: 15s
@@ -83,7 +94,8 @@ services:
       dockerfile: Dockerfile
       target: production
     container_name: smsbot-worker
-    command: celery -A tasks worker --loglevel=info --concurrency=2
+    entrypoint: ["./docker-entrypoint.sh"]
+    command: ["celery", "-A", "tasks", "worker", "--loglevel=info", "--concurrency=2"]
     depends_on:
       redis:
         condition: service_healthy
@@ -91,7 +103,7 @@ services:
       - bot_data:/app/data
       - bot_logs:/app/logs
 
-  # ── Beat: Celery Beat Scheduler (optional) ─────────────────
+  # ── Beat: Celery Beat Scheduler ────────────────────────────
   beat:
     <<: *common
     build:
@@ -99,7 +111,8 @@ services:
       dockerfile: Dockerfile
       target: production
     container_name: smsbot-beat
-    command: celery -A tasks beat --loglevel=info
+    entrypoint: ["./docker-entrypoint.sh"]
+    command: ["celery", "-A", "tasks", "beat", "--loglevel=info"]
     depends_on:
       redis:
         condition: service_healthy
