@@ -10,10 +10,10 @@ except Exception:
 
 # تنظیمات اصلی ربات
 BOT_CONFIG = {
-    'token': os.getenv('BOT_TOKEN', '7728660088:AAHW7p6ebM1m9Xpi9vTgPQDBaSOgOFPhaPM'),
-    'admin_ids': [int(x.strip()) for x in os.getenv('ADMIN_IDS', '1457637832').split(',')],
-    'webhook_url': os.getenv('WEBHOOK_URL', 'https://sms.abunumapp.com'),
-    'website_url': os.getenv('WEBSITE_URL', 'https://sms.abunumapp.com')
+    'token': os.getenv('BOT_TOKEN', '8867840427:AAG56v1yGp4XBjL2-vlhHIhPR765NikFhDI'),
+    'admin_ids': [int(x.strip()) for x in os.getenv('ADMIN_IDS', '8683874068').split(',')],
+    'webhook_url': os.getenv('WEBHOOK_URL', 'https://abunumapp.com'),
+    'website_url': os.getenv('WEBSITE_URL', 'https://abunumapp.com')
 }
 
 # تنظیمات hero-sms.com (SMS-Activate Protocol)

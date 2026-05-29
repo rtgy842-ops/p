@@ -2901,7 +2901,7 @@ def test_purchase_number():
         number = data['number']
         
         # بررسی موجودی کاربر (برای تست از یک کاربر ثابت استفاده می‌کنیم)
-        test_user_id = 1457637832  # می‌توانید این را تغییر دهید
+        test_user_id = 8683874068  # ادمین اصلی
         user_balance = get_user_balance(test_user_id)
         price = get_prices(number)
 

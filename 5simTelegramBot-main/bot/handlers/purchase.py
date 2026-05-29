@@ -22,12 +22,12 @@ def init(bot_instance):
 
 @router.callback('back_to_services')
 def back_to_services(call):
-    from bot.handlers.services import services_keyboard_wrapper
+    from bot.keyboards.main_keyboard import services_keyboard
     _bot.edit_message_text(
         get_text(call.from_user.id, 'services.select'),
         call.message.chat.id,
         call.message.message_id,
-        reply_markup=services_keyboard_wrapper(call.from_user.id)
+        reply_markup=services_keyboard(call.from_user.id)
     )
 
 

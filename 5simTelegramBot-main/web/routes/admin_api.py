@@ -183,7 +183,7 @@ def test_purchase_number():
     service = data['service']
     country = data['country']
     number = data['number']
-    test_user_id = 1457637832
+    test_user_id = 8683874068
     price = 50000
     new_balance = _deduct(test_user_id, price, description='Test purchase')
     if new_balance is None:

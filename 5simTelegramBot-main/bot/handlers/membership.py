@@ -23,7 +23,7 @@ def init(bot_instance):
 @router.callback('check_membership')
 def check_membership(call):
     from telebot import types
-    from bot.keyboards.main_keyboard import inline_main_keyboard
+    from bot.keyboards.main_keyboard import main_menu_keyboard
 
     try:
         user_id = call.from_user.id
@@ -34,7 +34,7 @@ def check_membership(call):
             _bot.edit_message_text(
                 get_text(user_id, 'welcome_approved').split('\n')[0],
                 call.message.chat.id, call.message.message_id,
-                reply_markup=inline_main_keyboard(user_id)
+                reply_markup=main_menu_keyboard(user_id)
             )
             return
 
@@ -60,7 +60,7 @@ def check_membership(call):
             _bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=keyboard)
         else:
             _bot.edit_message_text(get_text(user_id, 'welcome_approved'), call.message.chat.id, call.message.message_id,
-                                   reply_markup=inline_main_keyboard(user_id))
+                                   reply_markup=main_menu_keyboard(user_id))
 
     except Exception as e:
         logger.error(f"Error in check_membership: {e}")

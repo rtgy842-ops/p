@@ -22,12 +22,12 @@ def init(bot_instance):
 
 @router.callback('back_to_main')
 def back_to_main_menu(call):
-    from bot.keyboards.main_keyboard import inline_main_keyboard
+    from bot.keyboards.main_keyboard import main_menu_keyboard
     _bot.edit_message_text(
         get_text(call.from_user.id, 'welcome_back'),
         call.message.chat.id,
         call.message.message_id,
-        reply_markup=inline_main_keyboard(call.from_user.id)
+        reply_markup=main_menu_keyboard(call.from_user.id)
     )
 
 
@@ -35,7 +35,6 @@ def back_to_main_menu(call):
 def handle_check_balance(call):
     from telebot import types
     from compat.legacy_facade import get_balance as compat_get_balance
-    from bot.keyboards.main_keyboard import inline_main_keyboard
 
     user_id = call.from_user.id
     balance = compat_get_balance(user_id)
@@ -57,21 +56,13 @@ def handle_check_balance(call):
 
 @router.callback('buy_number')
 def handle_buy_number_entry(call):
-    from bot.keyboards.main_keyboard import inline_main_keyboard
+    from bot.keyboards.main_keyboard import services_keyboard
     user_id = call.from_user.id
     _bot.edit_message_text(
         get_text(user_id, 'services.select'),
         call.message.chat.id,
         call.message.message_id,
-        reply_markup=inline_main_keyboard(user_id)
-    )
-    # Re-show services keyboard
-    from bot.handlers.services import services_keyboard_wrapper
-    _bot.edit_message_text(
-        get_text(user_id, 'services.select'),
-        call.message.chat.id,
-        call.message.message_id,
-        reply_markup=services_keyboard_wrapper(user_id)
+        reply_markup=services_keyboard(user_id)
     )
 
 
