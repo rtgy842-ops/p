@@ -90,21 +90,9 @@ admin_config = _LazyAdminConfig()
 # ── Database setup is handled by migrations at startup ──
 # All tables created via db/schema.py + db/migrations.py.
 
-# ── Register ALL handler modules with bot ────────────────────
-from bot.router import router
-from bot.handlers.admin import init as admin_handlers_init
-from bot.handlers import menu as menu_module
-from bot.handlers import payment as payment_module
-from bot.handlers import membership as membership_module
-from bot.handlers import purchase as purchase_module
-
-admin_handlers_init(bot)
-menu_module.init(bot)
-payment_module.init(bot)
-membership_module.init(bot)
-purchase_module.init(bot)
-router.register_with_bot(bot)
-logging.info("✅ All handler modules registered via Router")
+# ── Handler registration — inline @bot.*_handler decorators below ──
+# All handlers are registered directly on the bot instance via decorators.
+# No separate router registration needed.
 
 # توابع مدیریت موجودی کاربر از database.py import شده‌اند (get_user_balance, add_balance)
 
@@ -3209,12 +3197,11 @@ if __name__ == '__main__':
         backup_manager.start()
         logging.info("✅ Backup service started")
 
-        # 5. Start bot in POLLING mode (more reliable than webhook initially)
-        import threading
-        logging.info(f"Starting bot in polling mode...")
-        polling_thread = threading.Thread(target=bot.infinity_polling, daemon=True)
-        polling_thread.start()
-        logging.info(f"✅ Bot polling started")
+        # 5. Set webhook and start Flask
+        bot.remove_webhook()
+        time.sleep(1)
+        bot.set_webhook(url=BOT_CONFIG['webhook_url'])
+        logging.info(f"✅ Webhook set to {BOT_CONFIG['webhook_url']}")
 
         app.run(
             host='0.0.0.0',
