@@ -198,35 +198,29 @@ class BackupManager:
     def _collect_backup_data(self) -> dict:
         """Collect all data that needs to be backed up."""
         data = {}
-
-        # Users + balances
         try:
-            conn = sqlite3.connect(DB_CONFIG['users_db'])
-            conn.row_factory = sqlite3.Row
+            from db.connection import ConnectionManager
+            cm = ConnectionManager.get_instance()
+            conn = cm.get_connection('users_db')
             cursor = conn.cursor()
 
-            # Users
             cursor.execute(
                 'SELECT user_id, username, first_name, last_name, '
                 'balance, is_blocked, language, join_date FROM users'
             )
             data['users'] = [dict(row) for row in cursor.fetchall()]
 
-            # Transactions
             cursor.execute(
                 'SELECT id, user_id, amount, type, description, ref_id, timestamp '
                 'FROM transactions ORDER BY id'
             )
             data['transactions'] = [dict(row) for row in cursor.fetchall()]
 
-            # Card payments
             cursor.execute(
                 'SELECT payment_id, user_id, amount, status, receipt, '
                 'admin_response, created_at FROM card_payments'
             )
             data['card_payments'] = [dict(row) for row in cursor.fetchall()]
-
-            conn.close()
         except Exception as e:
             logger.error(f"Error collecting backup data from users_db: {e}")
             data['users'] = {}
@@ -236,12 +230,12 @@ class BackupManager:
         return data
 
     def _execute_restore(self, data: dict) -> bool:
-        """
-        Execute database restore. Fully transactional.
-        """
+        """Execute database restore. Fully transactional."""
         conn = None
         try:
-            conn = sqlite3.connect(DB_CONFIG['users_db'])
+            from db.connection import ConnectionManager
+            cm = ConnectionManager.get_instance()
+            conn = cm.get_connection('users_db')
             cursor = conn.cursor()
 
             cursor.execute('BEGIN')

@@ -574,137 +574,59 @@ def _get_order_repo():
 
 def order_save(order_data: dict) -> int | None:
     """
-    Save an order. During migration, writes to BOTH legacy and new.
+    Save an order using OrderRepository (enterprise).
     Returns local order_id or None.
     """
-    # Legacy path — identical to bot.py save_order()
-    import sqlite3
-    legacy_id = None
     try:
-        conn = sqlite3.connect('bot.db')
-        cursor = conn.cursor()
-        cursor.execute('''CREATE TABLE IF NOT EXISTS orders (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            activation_id INTEGER NOT NULL,
-            service TEXT NOT NULL,
-            country TEXT NOT NULL,
-            operator TEXT NOT NULL,
-            phone TEXT NOT NULL,
-            price INTEGER NOT NULL,
-            status TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
-        cursor.execute('''INSERT INTO orders (
-            user_id, activation_id, service, country, operator, phone, price, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)''', (
-            order_data['user_id'], order_data['activation_id'],
-            order_data['service'], order_data['country'],
-            order_data['operator'], order_data['phone'],
-            order_data['price'], order_data['status']))
-        legacy_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
+        from db.repositories.order_repository import OrderRepository
+        repo = OrderRepository()
+        legacy_id = repo.create(order_data)
+        return legacy_id
     except Exception as e:
-        logger.error(f"Legacy save_order failed: {e}")
-
-    # New path
-    if is_migration_enabled('use_new_order_service'):
-        try:
-            svc = _get_order_service()
-            from data.dto import OrderDTO
-            order_data['status'] = OrderDTO.__annotations__.get('status', 'PENDING')
-            new_order = svc.create_order(order_data)
-            if new_order and legacy_id:
-                logger.info(f"Dual-write order: legacy_id={legacy_id}, new_id={new_order.id}")
-        except Exception as e:
-            logger.error(f"OrderService.create_order failed during dual-write: {e}")
-
-    return legacy_id
+        logger.error(f"Order save failed: {e}")
+        return None
 
 
 def order_save_code(order_id: int, code: str) -> bool:
-    """Save activation code. Dual-write."""
-    # Legacy
-    import sqlite3
-    from datetime import datetime
+    """Save activation code using OrderRepository."""
     try:
-        conn = sqlite3.connect('bot.db')
-        cursor = conn.cursor()
-        cursor.execute('''CREATE TABLE IF NOT EXISTS activation_codes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, order_id INTEGER NOT NULL,
-            code TEXT NOT NULL, status TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
-        cursor.execute('INSERT INTO activation_codes (order_id, code, created_at) VALUES (?, ?, ?)',
-                       (order_id, code, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
-        conn.commit()
-        conn.close()
+        from db.repositories.order_repository import OrderRepository
+        repo = OrderRepository()
+        return repo.save_activation_code(order_id, code)
     except Exception as e:
-        logger.error(f"Legacy save_activation_code failed: {e}")
-
-    # New
-    if is_migration_enabled('use_new_order_service'):
-        try:
-            _get_order_service().save_activation_code(order_id, code)
-        except Exception as e:
-            logger.error(f"OrderService.save_activation_code failed: {e}")
-
-    return True
+        logger.error(f"Save activation code failed: {e}")
+        return False
 
 
 def order_update_status(order_id: int, status: str) -> bool:
-    """Update order status. Dual-write."""
-    # Legacy
-    import sqlite3
+    """Update order status using OrderRepository."""
     try:
-        conn = sqlite3.connect('bot.db')
-        conn.execute('UPDATE orders SET status = ? WHERE id = ?', (status, order_id))
-        conn.commit()
-        conn.close()
+        from db.repositories.order_repository import OrderRepository
+        repo = OrderRepository()
+        return repo.update_status(order_id, status)
     except Exception as e:
-        logger.error(f"Legacy order status update failed: {e}")
-
-    # New
-    if is_migration_enabled('use_new_order_service'):
-        try:
-            _get_order_repo().update_status(order_id, status)
-        except Exception as e:
-            logger.error(f"OrderRepository.update_status failed: {e}")
-
-    return True
+        logger.error(f"Order status update failed: {e}")
+        return False
 
 
 def order_cancel(activation_id: int) -> dict:
     """
     Cancel order by activation_id. Returns {'success': bool, 'error': str}.
-    Dual-write to legacy (via refund_order_amount style) and new (OrderService).
+    Uses OrderRepository for cancel + WalletService for refund.
     """
-    # Legacy — find order, mark canceled, refund
-    import sqlite3
-    legacy_success = False
     try:
-        conn = sqlite3.connect('bot.db')
-        cursor = conn.cursor()
-        cursor.execute('SELECT user_id, price, status FROM orders WHERE activation_id = ?', (activation_id,))
-        row = cursor.fetchone()
-        if row and row[2].upper() != 'CANCELED':
-            user_id, price, _ = row
-            cursor.execute("UPDATE orders SET status = 'CANCELED' WHERE activation_id = ?", (activation_id,))
-            conn.commit()
-            # Legacy refund
-            refund_balance(user_id, price, 'بازگشت وجه بابت لغو سفارش', str(activation_id))
-            legacy_success = True
-        conn.close()
+        from db.repositories.order_repository import OrderRepository
+        repo = OrderRepository()
+        order = repo.find_by_activation_id(int(activation_id))
+        if order:
+            user_id = order['user_id'] if isinstance(order, dict) else order[1]
+            price = order['price'] if isinstance(order, dict) else order[7]
+            status = order['status'] if isinstance(order, dict) else order[8]
+            if (status or '').upper() != 'CANCELED':
+                repo.cancel_by_activation_id(int(activation_id))
+                refund_balance(user_id, price, 'Order cancellation refund', str(activation_id))
+                return {'success': True}
+        return {'success': False, 'error': 'Order not found or already cancelled'}
     except Exception as e:
-        logger.error(f"Legacy order cancel failed: {e}")
-
-    # New path
-    if is_migration_enabled('use_new_order_service'):
-        try:
-            svc = _get_order_service()
-            order = svc.get_order_by_activation(activation_id)
-            if order:
-                svc.cancel_order(order.id)
-        except Exception as e:
-            logger.error(f"OrderService.cancel_order failed: {e}")
-
-    return {'success': legacy_success}
+        logger.error(f"Order cancel failed: {e}")
+        return {'success': False, 'error': str(e)}

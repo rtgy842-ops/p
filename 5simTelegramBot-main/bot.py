@@ -109,26 +109,13 @@ def get_available_services():
 
 # تابع جدید برای دریافت کشورهای موجود برای یک سرویس خاص
 def get_countries_for_service(service):
-    conn = sqlite3.connect('sms_bot.db')
-    cursor = conn.cursor()
-    
     # استفاده از المصدر الموحد (Single Source of Truth)
     if service in SERVICE_COUNTRIES:
         return [
             {'code': country[0], 'name': country[1]}
             for country in SERVICE_COUNTRIES[service]
         ]
-    
-    # در غیر این صورت، کشورهای پیش‌فرض یا همه کشورها را از دیتابیس برگردان
-    try:
-        cursor.execute("SELECT DISTINCT country_code, country_name FROM products WHERE service = ?", (service,))
-        countries = [{'code': row[0], 'name': row[1]} for row in cursor.fetchall()]
-        conn.close()
-        return countries
-    except Exception as e:
-        logging.error(f"خطا در دریافت کشورها: {e}")
-        conn.close()
-        return []
+    return []
 
 # تابع دریافت قیمت‌ها از hero-sms.com (SMS-Activate Protocol)
 def get_prices(product):
@@ -612,19 +599,8 @@ def handle_country_selection(call):
                         available_count = 0
                 
                 if price > 0:
-                    # دریافت نرخ دلار و درصد سود از دیتابیس
-                    conn = sqlite3.connect('admin.db')
-                    cursor = conn.cursor()
-                    
-                    cursor.execute('SELECT value FROM settings WHERE key = "usd_rate"')
-                    usd_rate_result = cursor.fetchone()
-                    usd_rate = float(usd_rate_result[0]) if usd_rate_result else 0
-                    
-                    cursor.execute('SELECT value FROM settings WHERE key = "profit_percentage"')
-                    profit_result = cursor.fetchone()
-                    profit_percentage = float(profit_result[0]) if profit_result else 0
-                    
-                    conn.close()
+                    usd_rate = admin_config.get_usd_rate()
+                    profit_percentage = admin_config.get_profit_percentage()
                     
                     # محاسبه قیمت نهایی
                     price_info['price_usd'] = price
@@ -734,55 +710,21 @@ def handle_admin_stats(call):
         return
 
     try:
-        # اتصال به دیتابیس کاربران
-        users_conn = sqlite3.connect(DB_CONFIG['users_db'])
-        users_cursor = users_conn.cursor()
+        from db.repositories.user_repository import UserRepository
+        from db.repositories.order_repository import OrderRepository
+        user_repo = UserRepository()
+        order_repo = OrderRepository()
         
-        # تعداد کل کاربران
-        users_cursor.execute('SELECT COUNT(DISTINCT user_id) FROM users')
-        total_users = users_cursor.fetchone()[0]
-        users_conn.close()
-        
-        # اتصال به دیتابیس ربات
-        bot_conn = sqlite3.connect('bot.db')
-        bot_cursor = bot_conn.cursor()
-        
-        # دریافت نرخ فعلی دلار
+        total_users = user_repo.count_all()
         current_rate = get_current_usd_rate()
+        profit_percentage = admin_config.get_profit_percentage()
         
-        # دریافت درصد سود از جدول settings
-        admin_conn = sqlite3.connect('admin.db')
-        admin_cursor = admin_conn.cursor()
-        admin_cursor.execute('SELECT value FROM settings WHERE key = "profit_percentage"')
-        profit_percentage = float(admin_cursor.fetchone()[0] or 30)
-        admin_conn.close()
-        
-        # محاسبه درآمدها از جدول orders
-        # درآمد امروز
-        bot_cursor.execute('''
-            SELECT COALESCE(SUM(price), 0) FROM orders
-            WHERE date(created_at) = date('now')
-        ''')
-        today_total = bot_cursor.fetchone()[0] or 0
-        today_income = int(today_total - (today_total / (1 + profit_percentage/100)))
-        
-        # درآمد هفته
-        bot_cursor.execute('''
-            SELECT COALESCE(SUM(price), 0) FROM orders
-            WHERE date(created_at) >= date('now', '-7 days')
-        ''')
-        week_total = bot_cursor.fetchone()[0] or 0
-        week_income = int(week_total - (week_total / (1 + profit_percentage/100)))
-        
-        # درآمد ماه
-        bot_cursor.execute('''
-            SELECT COALESCE(SUM(price), 0) FROM orders
-            WHERE date(created_at) >= date('now', '-30 days')
-        ''')
-        month_total = bot_cursor.fetchone()[0] or 0
-        month_income = int(month_total - (month_total / (1 + profit_percentage/100)))
-        
-        bot_conn.close()
+        today_total = order_repo.sum_revenue(0)
+        week_total = order_repo.sum_revenue(7)
+        month_total = order_repo.sum_revenue(30)
+        today_income = int(today_total - (today_total / (1 + profit_percentage/100))) if profit_percentage > 0 else 0
+        week_income = int(week_total - (week_total / (1 + profit_percentage/100))) if profit_percentage > 0 else 0
+        month_income = int(month_total - (month_total / (1 + profit_percentage/100))) if profit_percentage > 0 else 0
         
         # ایجاد کیبورد
         keyboard = types.InlineKeyboardMarkup(row_width=2)
@@ -1743,25 +1685,11 @@ def handle_buy_number(call):
             logging.info(f"New balance after purchase: {new_balance}")
 
             try:
-                # بررسی وجود جدول
-                conn = sqlite3.connect(DB_CONFIG['users_db'])
-                cursor = conn.cursor()
-                
-                # ایجاد جدول اگر وجود ندارد
-                cursor.execute('''CREATE TABLE IF NOT EXISTS orders
-                    (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                     user_id INTEGER,
-                     phone_number TEXT,
-                     service TEXT,
-                     country TEXT,
-                     price INTEGER,
-                     order_id TEXT UNIQUE,
-                     status TEXT DEFAULT 'active',
-                     order_date DATETIME DEFAULT CURRENT_TIMESTAMP)''')
-                
-                # ذخیره اطلاعات سفارش
-                cursor.execute('''
-                    INSERT INTO orders 
+                from db.connection import ConnectionManager
+                cm = ConnectionManager.get_instance()
+                conn = cm.get_connection('users_db')
+                conn.execute('''
+                    INSERT INTO orders
                     (user_id, phone_number, service, country, price, order_id, status)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                 ''', (
@@ -1796,14 +1724,12 @@ def handle_buy_number(call):
                 )
                 logging.info("Success message sent to user")
 
-            except sqlite3.Error as db_error:
+            except Exception as db_error:
                 logging.error(f"Database error: {db_error}")
                 # برگرداندن پول در صورت خطا
                 compat_refund_balance(call.from_user.id, price,
                     description='بازگشت وجه بابت خطا در ثبت سفارش')
                 bot.answer_callback_query(call.id, "❌ خطا در ثبت سفارش")
-            finally:
-                conn.close()
 
         else:
             purchase_logger.error(f"hero-sms.com API error: {response.text}")
@@ -1869,19 +1795,8 @@ def handle_buy_number(call):
                 if operator in operators_data and operators_data[operator]['count'] > 0:
                     price_usd = operators_data[operator]['cost']
                     
-                    # دریافت نرخ دلار و درصد سود از دیتابیس
-                    conn = sqlite3.connect('admin.db')
-                    cursor = conn.cursor()
-                    
-                    cursor.execute('SELECT value FROM settings WHERE key = "usd_rate"')
-                    usd_rate_result = cursor.fetchone()
-                    usd_rate = float(usd_rate_result[0]) if usd_rate_result else 0
-                    
-                    cursor.execute('SELECT value FROM settings WHERE key = "profit_percentage"')
-                    profit_result = cursor.fetchone()
-                    profit_percentage = float(profit_result[0]) if profit_result else 0
-                    
-                    conn.close()
+                    usd_rate = admin_config.get_usd_rate()
+                    profit_percentage = admin_config.get_profit_percentage()
                     
                     price_toman = round(price_usd * usd_rate * (1 + profit_percentage/100))
                     
@@ -2079,16 +1994,14 @@ def refund_order_amount(order_id):
         if not result.get('success'):
             return False, result.get('error', 'سفارش یافت نشد')
 
-        # Get refund details from legacy for accurate reporting
-        import sqlite3
-        conn = sqlite3.connect('bot.db')
-        cursor = conn.cursor()
-        cursor.execute('SELECT user_id, price FROM orders WHERE activation_id = ?', (order_id,))
-        row = cursor.fetchone()
-        conn.close()
+        # Get refund details via OrderRepository
+        from db.repositories.order_repository import OrderRepository
+        repo = OrderRepository()
+        order = repo.find_by_activation_id(int(order_id))
 
-        if row:
-            user_id, price = row
+        if order:
+            user_id = order['user_id'] if isinstance(order, dict) else order[1]
+            price = order['price'] if isinstance(order, dict) else order[7]
             new_balance = compat_get_balance(user_id)
             logging.info(f"مبلغ {price} تومان به حساب کاربر {user_id} برگشت داده شد. موجودی جدید: {new_balance}")
             return True, {'refund_amount': price, 'new_balance': new_balance}
@@ -2163,35 +2076,8 @@ operator_config = OperatorConfig()
 
 # و در تابع initialize یا main
 def initialize_bot():
-    try:
-        conn = sqlite3.connect('bot.db')
-        cursor = conn.cursor()
-        
-        # ایجاد جدول settings در شروع برنامه
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS settings (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            )
-        ''')
-        
-        # بررسی و اضافه کردن تنظیمات پیش‌فرض
-        cursor.execute('SELECT COUNT(*) FROM settings')
-        if cursor.fetchone()[0] == 0:
-            cursor.execute('''
-                INSERT INTO settings (key, value) VALUES 
-                ("usd_rate", "0.35"),
-                ("profit_percentage", "20")
-            ''')
-        
-        conn.commit()
-        logging.info("Bot initialized successfully with required tables")
-        
-    except sqlite3.Error as e:
-        logging.error(f"Database initialization error: {e}")
-    finally:
-        if conn:
-            conn.close()
+    """No-op: all tables created by migrations at startup."""
+    logging.info("Bot initialized (enterprise migration system)")
 
 @bot.callback_query_handler(func=lambda call: call.data == "operator_settings")
 def handle_operator_settings(call):
@@ -2360,34 +2246,12 @@ def handle_my_orders(call):
 @app.route('/orders/<int:user_id>')
 def user_orders(user_id):
     try:
-        # اضافه کردن لاگ برای شروع
         logger.info(f"Fetching orders for user_id: {user_id}")
         
-        # دریافت سفارش‌های کاربر از دیتابیس
-        conn = sqlite3.connect('bot.db')
-        cursor = conn.cursor()
-        
-        # بررسی وجود جدول
-        cursor.execute("""
-            SELECT name FROM sqlite_master 
-            WHERE type='table' AND name='orders'
-        """)
-        if not cursor.fetchone():
-            logger.error("Table 'orders' does not exist")
-            return "جدول سفارش‌ها وجود ندارد", 500
-            
-        # دریافت سفارش‌ها
-        cursor.execute('''
-            SELECT activation_id, phone, service, country, price, status, created_at
-            FROM orders 
-            WHERE user_id = ?
-            ORDER BY created_at DESC
-        ''', (user_id,))
-        
-        orders_data = cursor.fetchall()
-        logger.info(f"Found {len(orders_data)} orders for user {user_id}")
-        
-        conn.close()
+        from db.repositories.order_repository import OrderRepository
+        repo = OrderRepository()
+        orders_data = repo.find_by_user(user_id)
+        logger.info(f"Found {len(orders_data) if orders_data else 0} orders for user {user_id}")
         
         orders = []
         base_url = BOT_CONFIG['webhook_url'].rstrip('/')
@@ -2574,26 +2438,18 @@ def check_card_info(call):
         return
         
     try:
-        conn = sqlite3.connect(DB_CONFIG['admin_db'])
-        cursor = conn.cursor()
-        cursor.execute('SELECT card_number, card_holder FROM card_info LIMIT 1')
-        card_info = cursor.fetchone()
-        conn.close()
-        
+        card_info = admin_config._repo.get_card_info()
         if card_info:
             bot.answer_callback_query(
                 call.id,
-                f"اطلاعات کارت:\n"
-                f"شماره: {card_info[0]}\n"
-                f"به نام: {card_info[1]}",
+                f"Card Info:\nNumber: {card_info['card_number']}\nHolder: {card_info['card_holder']}",
                 show_alert=True
             )
         else:
-            bot.answer_callback_query(call.id, "❌ اطلاعات کارتی ثبت نشده است", show_alert=True)
-            
+            bot.answer_callback_query(call.id, "❌ No card info registered", show_alert=True)
     except Exception as e:
         logging.error(f"Error checking card info: {e}")
-        bot.answer_callback_query(call.id, "❌ خطا در بررسی اطلاعات کارت", show_alert=True)
+        bot.answer_callback_query(call.id, "❌ Error", show_alert=True)
 
 @bot.callback_query_handler(func=lambda call: call.data == "new_card")
 def handle_new_card(call):
@@ -2627,17 +2483,7 @@ def process_card_number(message):
         return
         
     try:
-        # ذخیره شماره کارت در دیتابیس
-        conn = sqlite3.connect(DB_CONFIG['admin_db'])
-        cursor = conn.cursor()
-        
-        # پاک کردن اطلاعات قبلی
-        cursor.execute('DELETE FROM card_info')
-        
-        # افزودن شماره کارت جدید
-        cursor.execute('INSERT INTO card_info (card_number) VALUES (?)', (card_number,))
-        conn.commit()
-        conn.close()
+        admin_config._repo.set_card_info(card_number, '')
         
         # درخواست نام صاحب کارت
         msg = bot.reply_to(
@@ -2663,18 +2509,10 @@ def process_card_holder(message):
         return
         
     try:
-        conn = sqlite3.connect(DB_CONFIG['admin_db'])
-        cursor = conn.cursor()
-        cursor.execute('UPDATE card_info SET card_holder = ? WHERE card_holder IS NULL', (card_holder,))
-        conn.commit()
-        
-        # بررسی اطلاعات نهایی
-        cursor.execute('SELECT card_number, card_holder FROM card_info LIMIT 1')
-        card_info = cursor.fetchone()
-        conn.close()
-        
+        card_info = admin_config._repo.get_card_info()
         if card_info:
-            card_number, card_holder = card_info
+            card_number = card_info['card_number']
+            admin_config._repo.set_card_info(card_number, card_holder)
             
             # نمایش اطلاعات ذخیره شده
             keyboard = types.InlineKeyboardMarkup()
@@ -2718,13 +2556,12 @@ def _require_admin(f):
 @_require_admin
 def test_db_connection():
     try:
-        conn = sqlite3.connect(DB_CONFIG['users_db'])
-        cursor = conn.cursor()
-        cursor.execute('SELECT 1')
-        conn.close()
-        return jsonify({'success': True, 'message': '✅ اتصال به دیتابیس موفق'})
+        from db.connection import ConnectionManager
+        cm = ConnectionManager.get_instance()
+        stats = cm.get_stats()
+        return jsonify({'success': True, 'message': f'✅ DB OK — {stats["active_connections"]} connections'})
     except Exception as e:
-        return jsonify({'success': False, 'message': f'❌ خطا در اتصال به دیتابیس: {str(e)}'})
+        return jsonify({'success': False, 'message': f'❌ Error: {str(e)}'})
 
 @app.route('/test_create_user', methods=['POST'])
 @_require_admin
@@ -2732,19 +2569,11 @@ def test_create_user():
     try:
         data = request.get_json()
         user_id = int(data['user_id'])
-        
-        conn = sqlite3.connect(DB_CONFIG['users_db'])
-        cursor = conn.cursor()
-        cursor.execute('INSERT OR IGNORE INTO users (user_id, balance) VALUES (?, 0)', (user_id,))
-        conn.commit()
-        conn.close()
-        
-        return jsonify({
-            'success': True, 
-            'message': f'✅ کاربر {user_id} با موفقیت ایجاد شد'
-        })
+        from db.repositories.user_repository import UserRepository
+        UserRepository().create_if_not_exists(user_id)
+        return jsonify({'success': True, 'message': f'✅ User {user_id} created'})
     except Exception as e:
-        return jsonify({'success': False, 'message': f'❌ خطا در ایجاد کاربر: {str(e)}'})
+        return jsonify({'success': False, 'message': f'❌ Error: {str(e)}'})
 
 @app.route('/test_add_balance', methods=['POST'])
 @_require_admin
@@ -2783,28 +2612,7 @@ def test_transaction():
                 'message': '❌ خطا در افزایش موجودی'
             })
 
-        # سپس تراکنش را ثبت می‌کنیم
-        conn = sqlite3.connect(DB_CONFIG['users_db'])
-        cursor = conn.cursor()
-        
-        cursor.execute('''CREATE TABLE IF NOT EXISTS transactions
-            (id INTEGER PRIMARY KEY AUTOINCREMENT,
-             user_id INTEGER,
-             amount INTEGER,
-             type TEXT,
-             description TEXT,
-             ref_id TEXT,
-             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-             FOREIGN KEY (user_id) REFERENCES users(user_id))''')
-        
-        ref_id = f'TEST{int(time.time())}'
-        cursor.execute('''
-            INSERT INTO transactions (user_id, amount, type, description, ref_id)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (user_id, amount, 'deposit', 'تراکنش تست', ref_id))
-        
-        conn.commit()
-        conn.close()
+        # Transaction already recorded by compat layer (dual-write) — no-op here
         
         return jsonify({
             'success': True,
@@ -2965,18 +2773,10 @@ def initialize_bot():
 @_require_admin
 def check_database():
     try:
-        conn = sqlite3.connect(DB_CONFIG['users_db'])
-        cursor = conn.cursor()
-        
-        # بررسی تعداد کاربران و مجموع موجودی
-        cursor.execute('SELECT COUNT(*), SUM(balance) FROM users')
-        users_count, total_balance = cursor.fetchone()
-        
-        # بررسی 5 کاربر اخیر - بدون استفاده از join_date
-        cursor.execute('SELECT user_id, balance FROM users ORDER BY user_id DESC LIMIT 5')
-        recent_users = cursor.fetchall()
-        
-        conn.close()
+        from db.repositories.user_repository import UserRepository
+        repo = UserRepository()
+        users_count = repo.count_all()
+        recent = repo.list_recent(5)
         
         return jsonify({
             'success': True,
@@ -3123,15 +2923,15 @@ def test_purchase_number():
                 'message': 'خطا در بروزرسانی موجودی'
             })
 
-        # ذخیره اطلاعات سفارش در دیتابیس
-        conn = sqlite3.connect(DB_CONFIG['users_db'])
-        cursor = conn.cursor()
-        cursor.execute('''INSERT INTO orders 
+        # Save order via ConnectionManager
+        from db.connection import ConnectionManager
+        cm = ConnectionManager.get_instance()
+        conn = cm.get_connection('users_db')
+        conn.execute('''INSERT INTO orders
             (user_id, service, country, phone_number, price, status, order_id)
             VALUES (?, ?, ?, ?, ?, ?, ?)''',
             (test_user_id, service, country, number, price, 'active', order_id))
         conn.commit()
-        conn.close()
 
         return jsonify({
             'success': True,
@@ -3149,55 +2949,8 @@ def test_purchase_number():
         })
 
 # در ابتدای فایل bot.py
-def create_required_tables():
-    try:
-        conn = sqlite3.connect('orders.db')
-        cursor = conn.cursor()
-        
-        # بررسی ستون‌های موجود
-        cursor.execute("PRAGMA table_info(orders)")
-        columns = cursor.fetchall()
-        existing_columns = [column[1] for column in columns]
-        
-        # اگر جدول وجود نداشت، آن را بساز
-        if not existing_columns:
-            cursor.execute('''
-                CREATE TABLE orders (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    order_id TEXT NOT NULL,
-                    user_id INTEGER NOT NULL,
-                    phone TEXT NOT NULL,
-                    service TEXT NOT NULL,
-                    country TEXT NOT NULL,
-                    operator TEXT NOT NULL,
-                    price REAL NOT NULL,
-                    status TEXT NOT NULL DEFAULT 'PENDING',
-                    created_at TEXT NOT NULL
-                )
-            ''')
-        else:
-            # اضافه کردن ستون‌های جدید اگر وجود نداشتند
-            if 'phone' not in existing_columns:
-                cursor.execute('ALTER TABLE orders ADD COLUMN phone TEXT')
-            if 'status' not in existing_columns:
-                cursor.execute('ALTER TABLE orders ADD COLUMN status TEXT DEFAULT "PENDING"')
-            if 'service' not in existing_columns:
-                cursor.execute('ALTER TABLE orders ADD COLUMN service TEXT')
-            if 'country' not in existing_columns:
-                cursor.execute('ALTER TABLE orders ADD COLUMN country TEXT')
-            if 'operator' not in existing_columns:
-                cursor.execute('ALTER TABLE orders ADD COLUMN operator TEXT')
-            if 'created_at' not in existing_columns:
-                cursor.execute('ALTER TABLE orders ADD COLUMN created_at TEXT')
-        
-        conn.commit()
-        conn.close()
-        logging.info("جداول با موفقیت بروزرسانی شدند")
-        return True
-        
-    except Exception as e:
-        logging.error(f"خطا در ایجاد جداول مورد نیاز: {str(e)}")
-        return False
+# create_required_tables() already defined above as no-op.
+# save_order delegate already uses compat layer.
 
 def save_order(order_data):
     """ذخیره سفارش — uses compat layer (legacy or OrderService)"""
@@ -3210,17 +2963,8 @@ def save_order(order_data):
 @_require_admin
 def price_calculator():
     try:
-        # دریافت نرخ دلار و درصد سود از دیتابیس
-        conn = sqlite3.connect('bot.db')
-        cursor = conn.cursor()
-        
-        cursor.execute("SELECT value FROM settings WHERE key='usd_rate'")
-        usd_rate = cursor.fetchone()[0]
-        
-        cursor.execute("SELECT value FROM settings WHERE key='profit_percentage'")
-        profit_percentage = cursor.fetchone()[0]
-        
-        conn.close()
+        usd_rate = admin_config.get_usd_rate()
+        profit_percentage = admin_config.get_profit_percentage()
         
         return render_template('price_calculator.html', 
                              usd_rate=usd_rate,
@@ -3240,12 +2984,7 @@ def update_usd_rate():
         if data.get('rub'):
             new_rate = float(data['rub']['value'])
             
-            # ذخیره نرخ جدید در دیتابیس
-            conn = sqlite3.connect('bot.db')
-            cursor = conn.cursor()
-            cursor.execute("UPDATE settings SET value = ? WHERE key = 'usd_rate'", (str(new_rate),))
-            conn.commit()
-            conn.close()
+            admin_config.set_usd_rate(new_rate)
             
             return jsonify({
                 'success': True,
@@ -3299,18 +3038,8 @@ def get_usd_rate():
 @_require_admin
 def get_settings():
     try:
-        conn = sqlite3.connect('admin.db')
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT value FROM settings WHERE key = "current_rate"')
-        rate_result = cursor.fetchone()
-        current_rate = float(rate_result[0]) if rate_result else 1000
-        
-        cursor.execute('SELECT value FROM settings WHERE key = "profit_percentage"')
-        profit_result = cursor.fetchone()
-        profit_percentage = float(profit_result[0]) if profit_result else 20
-        
-        conn.close()
+        current_rate = admin_config.get_usd_rate()
+        profit_percentage = admin_config.get_profit_percentage()
         
         return jsonify({
             'success': True,
@@ -3364,21 +3093,8 @@ def get_telegram_price(country):
                         available_count = operator_data['count']
                 
                 if min_price != float('inf'):
-                    # دریافت نرخ دلار از دیتابیس admin.db
-                    conn = sqlite3.connect('admin.db')
-                    cursor = conn.cursor()
-                    
-                    # دریافت نرخ دلار
-                    cursor.execute('SELECT value FROM settings WHERE key = "usd_rate"')
-                    usd_rate_result = cursor.fetchone()
-                    usd_rate = float(usd_rate_result[0]) if usd_rate_result else 0
-                    
-                    # دریافت درصد سود
-                    cursor.execute('SELECT value FROM settings WHERE key = "profit_percentage"')
-                    profit_result = cursor.fetchone()
-                    profit_percentage = float(profit_result[0]) if profit_result else 0
-                    
-                    conn.close()
+                    usd_rate = admin_config.get_usd_rate()
+                    profit_percentage = admin_config.get_profit_percentage()
                     
                     if usd_rate == 0:
                         logging.error("نرخ دلار صفر است. لطفاً ابتدا نرخ دلار را تنظیم کنید.")
