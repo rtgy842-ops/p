@@ -92,6 +92,17 @@ def language_handler(message):
     keyboard.add(types.InlineKeyboardButton(get_text(user_id, 'navigation.back_to_main'), callback_data="back_to_main"))
     bot.send_message(message.chat.id, get_text(user_id, 'language.select_title'), reply_markup=keyboard)
 
+@bot.callback_query_handler(func=lambda call: call.data == 'language_menu')
+def language_menu_handler(call):
+    user_id = call.from_user.id
+    from i18n import get_all_languages
+    keyboard = types.InlineKeyboardMarkup(row_width=1)
+    for lang in get_all_languages():
+        keyboard.add(types.InlineKeyboardButton(lang['name'], callback_data=f"setlang_{lang['code']}"))
+    keyboard.add(types.InlineKeyboardButton(get_text(user_id, 'navigation.back_to_main'), callback_data="back_to_main"))
+    bot.edit_message_text(get_text(user_id, 'language.select_title'), call.message.chat.id,
+                          call.message.message_id, reply_markup=keyboard)
+
 @bot.callback_query_handler(func=lambda call: call.data.startswith('setlang_'))
 def handle_language_selection(call):
     user_id = call.from_user.id

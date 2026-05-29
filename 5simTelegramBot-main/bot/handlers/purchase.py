@@ -1,8 +1,7 @@
 """
-bot/handlers/purchase.py — Purchase Flow Handlers
-──────────────────────────────────────────────────
-service_selection → country_selection → buy_number → get_code → cancel_order
-All use compat layer (WalletService, SMSService, OrderService ready).
+bot/handlers/purchase.py — Purchase + Service Selection Handlers
+─────────────────────────────────────────────────
+All handlers registered via Router.
 """
 
 import logging
@@ -11,241 +10,235 @@ from i18n import get_text
 from config import BOT_CONFIG
 
 logger = logging.getLogger(__name__)
-
 _bot = None
 
-
 def init(bot_instance):
-    global _bot
-    _bot = bot_instance
+    global _bot; _bot = bot_instance
 
 
-@router.callback('back_to_services')
-def back_to_services(call):
+# ── buy_number_ (with parameters) MUST come before buy_number ──
+@router.callback('buy_number_')
+def handle_buy_number_with_params(call):
+    from telebot import types
+    from compat.legacy_facade import get_balance, deduct_balance, sms_buy_number, order_save
+    from data.service_countries import get_countries_for_service, get_country_name as _get_country_name
+    from operator_config import OperatorConfig
+
+    try:
+        user_id = call.from_user.id
+        balance = get_balance(user_id)
+        parts = call.data.split('_')
+        service = parts[2]; country = parts[3]; operator = parts[4]
+
+        country_name = _get_country_name(service, country)
+        if not country_name:
+            country_name = get_text(user_id, f'countries.{country}')
+
+        from compat.legacy_facade import sms_get_prices
+        price_data = sms_get_prices(service)
+        price_toman = 50000
+        if price_data:
+            from db.repositories.settings_repository import SettingsRepository
+            repo = SettingsRepository()
+            usd_rate = float(repo.get('usd_rate') or 0)
+            profit = float(repo.get('profit_percentage') or 30)
+            if country in price_data and service in price_data[country]:
+                ops = price_data[country][service]
+                if operator in ops and ops[operator]['count'] > 0:
+                    price_toman = round(ops[operator]['cost'] * usd_rate * (1 + profit/100))
+
+        if balance < price_toman:
+            deficit = price_toman - balance
+            keyboard = types.InlineKeyboardMarkup(row_width=1)
+            keyboard.add(types.InlineKeyboardButton(get_text(user_id, 'main_menu.add_funds'), callback_data="add_funds"))
+            keyboard.add(types.InlineKeyboardButton(get_text(user_id, 'navigation.back_to_services'), callback_data="back_to_services"))
+            _bot.edit_message_text(get_text(user_id, 'purchase.insufficient_balance', balance=balance, price=price_toman, deficit=deficit),
+                                   call.message.chat.id, call.message.message_id, reply_markup=keyboard)
+            return
+
+        _bot.edit_message_text(get_text(user_id, 'purchase.buying', service=service, country=country_name),
+                               call.message.chat.id, call.message.message_id)
+
+        result = sms_buy_number(country, operator, service)
+        if result and isinstance(result, dict) and result.get('success') and 'data' in result:
+            order_data = result['data']
+            deduct_balance(user_id, price_toman, f'Buy {service} in {country}')
+
+            order_info = {
+                'user_id': user_id, 'activation_id': order_data['order_id'],
+                'service': service, 'country': country, 'operator': operator,
+                'phone': order_data['phone'], 'price': price_toman,
+                'status': order_data.get('status', 'PENDING').lower()
+            }
+            order_id = order_save(order_info)
+
+            if order_id:
+                details_url = f"{BOT_CONFIG['website_url']}/number_details/{order_id}"
+                keyboard = types.InlineKeyboardMarkup(row_width=1)
+                keyboard.add(
+                    types.InlineKeyboardButton(get_text(user_id, 'purchase.get_code'), callback_data=f"get_code_{order_data['order_id']}"),
+                    types.InlineKeyboardButton(get_text(user_id, 'purchase.cancel_order'), callback_data=f"cancel_order_{order_data['order_id']}"),
+                    types.InlineKeyboardButton(get_text(user_id, 'purchase.view_details_web'), url=details_url),
+                    types.InlineKeyboardButton(get_text(user_id, 'navigation.back_to_services'), callback_data="back_to_services"))
+                _bot.edit_message_text(
+                    get_text(user_id, 'purchase.success', service=service, country=country_name,
+                             phone=order_data['phone'], operator=operator, price=price_toman),
+                    call.message.chat.id, call.message.message_id, reply_markup=keyboard)
+            else:
+                _bot.edit_message_text(get_text(user_id, 'purchase.save_error'),
+                                       call.message.chat.id, call.message.message_id)
+        else:
+            error_msg = (result or {}).get('error', 'Unknown error') if isinstance(result, dict) else 'Unknown error'
+            _bot.edit_message_text(get_text(user_id, 'purchase.buy_error', error=error_msg),
+                                   call.message.chat.id, call.message.message_id)
+    except Exception as e:
+        logger.error(f"Error in buy_number_: {e}", exc_info=True)
+        _bot.answer_callback_query(call.id, get_text(call.from_user.id, 'errors.general_short'))
+
+
+# ── buy_number (main menu entry) ──────────────────────────
+@router.callback('buy_number')
+def handle_buy_number_entry(call):
     from bot.keyboards.main_keyboard import services_keyboard
     _bot.edit_message_text(
         get_text(call.from_user.id, 'services.select'),
-        call.message.chat.id,
-        call.message.message_id,
-        reply_markup=services_keyboard(call.from_user.id)
-    )
+        call.message.chat.id, call.message.message_id,
+        reply_markup=services_keyboard(call.from_user.id))
 
+
+# ── check_balance ─────────────────────────────────────────
+@router.callback('check_balance')
+def handle_check_balance(call):
+    from telebot import types
+    from compat.legacy_facade import get_balance
+    user_id = call.from_user.id
+    balance = get_balance(user_id)
+    keyboard = types.InlineKeyboardMarkup(row_width=1)
+    keyboard.add(
+        types.InlineKeyboardButton(get_text(user_id, 'main_menu.add_funds'), callback_data="add_funds"),
+        types.InlineKeyboardButton(get_text(user_id, 'navigation.back_to_main'), callback_data="back_to_main"))
+    _bot.edit_message_text(get_text(user_id, 'wallet.title', balance=balance),
+                           call.message.chat.id, call.message.message_id,
+                           reply_markup=keyboard, parse_mode='Markdown')
+
+
+# ── my_orders ─────────────────────────────────────────────
+@router.callback('my_orders')
+def handle_my_orders(call):
+    from telebot import types
+    user_id = call.from_user.id
+    keyboard = types.InlineKeyboardMarkup()
+    keyboard.add(types.InlineKeyboardButton(
+        get_text(user_id, 'order.view_orders_web'),
+        url=f"{BOT_CONFIG['website_url']}/orders/{user_id}"))
+    keyboard.add(types.InlineKeyboardButton(get_text(user_id, 'navigation.back_to_main'), callback_data="back_to_main"))
+    _bot.edit_message_text(get_text(user_id, 'order.my_orders_title'),
+                           call.message.chat.id, call.message.message_id, reply_markup=keyboard)
+
+
+# ── help ──────────────────────────────────────────────────
+@router.callback('help')
+def handle_help(call):
+    from telebot import types
+    user_id = call.from_user.id
+    keyboard = types.InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        types.InlineKeyboardButton(get_text(user_id, 'help.buy_number'), callback_data="help_buy_number"),
+        types.InlineKeyboardButton(get_text(user_id, 'help.charge'), callback_data="help_charge"),
+        types.InlineKeyboardButton(get_text(user_id, 'help.get_code'), callback_data="help_get_code"),
+        types.InlineKeyboardButton(get_text(user_id, 'help.payment_methods'), callback_data="help_payment"),
+        types.InlineKeyboardButton(get_text(user_id, 'help.delivery_time'), callback_data="help_delivery"),
+        types.InlineKeyboardButton(get_text(user_id, 'help.cancel_order'), callback_data="help_cancel"),
+        types.InlineKeyboardButton(get_text(user_id, 'navigation.back'), callback_data="back_to_main"))
+    _bot.edit_message_text(get_text(user_id, 'help.title'),
+                           call.message.chat.id, call.message.message_id, reply_markup=keyboard)
+
+# ── help sub-menu callbacks ───────────────────────────────
+for _cb in ['help_buy_number', 'help_charge', 'help_get_code', 'help_payment', 'help_delivery', 'help_cancel']:
+    _answer_map = {
+        'help_buy_number': 'help.buy_number_answer', 'help_charge': 'help.charge_answer',
+        'help_get_code': 'help.get_code_answer', 'help_payment': 'help.payment_methods_answer',
+        'help_delivery': 'help.delivery_time_answer', 'help_cancel': 'help.cancel_order_answer',
+    }
+    def _make_help_handler(cb):
+        @router.callback(cb)
+        def _handler(call, key=_answer_map[cb]):
+            from telebot import types
+            uid = call.from_user.id
+            kb = types.InlineKeyboardMarkup()
+            kb.add(types.InlineKeyboardButton(get_text(uid, 'navigation.back_to_help'), callback_data="help"))
+            _bot.edit_message_text(get_text(uid, key), call.message.chat.id, call.message.message_id, reply_markup=kb)
+        return _handler
+    _make_help_handler(_cb)
+
+
+# ── Navigation + Operator ─────────────────────────────────
+@router.callback('back_to_services')
+def back_to_services(call):
+    from bot.keyboards.main_keyboard import services_keyboard
+    _bot.edit_message_text(get_text(call.from_user.id, 'services.select'),
+                           call.message.chat.id, call.message.message_id,
+                           reply_markup=services_keyboard(call.from_user.id))
 
 @router.callback('no_operator')
 def handle_no_operator(call):
     _bot.answer_callback_query(call.id, get_text(call.from_user.id, 'services.no_operator'))
 
 
-@router.callback('buy_number_')
-def handle_buy_number(call):
-    """Comprehensive purchase flow via compat layer."""
-    from telebot import types
-    from compat.legacy_facade import (
-        get_balance as compat_get_balance,
-        deduct_balance as compat_deduct_balance,
-        sms_buy_number as compat_sms_buy_number,
-        order_save as compat_order_save,
-    )
-    from data.service_countries import get_countries_for_service, get_country_name as _get_country_name
-    from operator_config import OperatorConfig
-
-    try:
-        user_id = call.from_user.id
-        balance = compat_get_balance(user_id)
-
-        parts = call.data.split('_')
-        service = parts[2]
-        country = parts[3]
-        operator = parts[4]
-
-        op_config = OperatorConfig()
-        config_operator, country_name = op_config.get_operator_info(service, country)
-        if not country_name:
-            country_name = get_text(user_id, f'countries.{country}')
-
-        # Get price from compat layer
-        from config import COUNTRY_ID_MAP, SERVICE_CODE_MAP, HEROSMS_CONFIG
-        import requests
-
-        country_id = COUNTRY_ID_MAP.get(country, country)
-        service_code = SERVICE_CODE_MAP.get(service, service)
-        params = {'api_key': HEROSMS_CONFIG['api_key'], 'action': 'getPrices', 'country': country_id, 'service': service_code}
-        response = requests.get(HEROSMS_CONFIG['api_url'], params=params, timeout=10)
-
-        if response.status_code != 200:
-            _bot.answer_callback_query(call.id, get_text(user_id, 'purchase.price_fetch_error'))
-            return
-
-        data = response.json()
-        if country_id not in data or service_code not in data[country_id]:
-            _bot.answer_callback_query(call.id, get_text(user_id, 'purchase.service_country_unavailable'))
-            return
-
-        operators_data = data[country_id][service_code]
-        if operator not in operators_data or operators_data[operator]['count'] <= 0:
-            _bot.edit_message_text(
-                get_text(user_id, 'purchase.operator_unavailable', operator=operator, country=country_name, service=service),
-                call.message.chat.id, call.message.message_id,
-                reply_markup=types.InlineKeyboardMarkup().add(
-                    types.InlineKeyboardButton(get_text(user_id, 'navigation.back_to_services'), callback_data="back_to_services"))
-            )
-            return
-
-        price_usd = operators_data[operator]['cost']
-
-        # Get USD rate + profit via SettingsRepository
-        from db.repositories.settings_repository import SettingsRepository
-        repo = SettingsRepository()
-        usd_rate_val = repo.get('usd_rate')
-        usd_rate = float(usd_rate_val) if usd_rate_val else 0
-        profit_val = repo.get('profit_percentage')
-        profit_pct = float(profit_val) if profit_val else 0
-
-        price_toman = round(price_usd * usd_rate * (1 + profit_pct / 100))
-
-        if balance < price_toman:
-            keyboard = types.InlineKeyboardMarkup(row_width=1)
-            keyboard.add(
-                types.InlineKeyboardButton(get_text(user_id, 'main_menu.add_funds'), callback_data="add_funds"),
-                types.InlineKeyboardButton(get_text(user_id, 'navigation.back_to_services'), callback_data="back_to_services")
-            )
-            deficit = price_toman - balance
-            _bot.edit_message_text(
-                get_text(user_id, 'purchase.insufficient_balance', balance=balance, price=price_toman, deficit=deficit),
-                call.message.chat.id, call.message.message_id, reply_markup=keyboard
-            )
-            return
-
-        # Buy the number
-        _bot.edit_message_text(
-            get_text(user_id, 'purchase.buying', service=service, country=country_name),
-            call.message.chat.id, call.message.message_id
-        )
-
-        result = compat_sms_buy_number(country, operator, service)
-
-        if result and result.get('success') and 'data' in result:
-            order_data = result['data']
-            activation_id = order_data['order_id']
-            phone_number = order_data['phone']
-
-            # Deduct balance via compat
-            compat_deduct_balance(user_id, price_toman, description=f'خرید شماره {service} در {country}')
-
-            # Save order via compat
-            order_info = {
-                'user_id': user_id, 'activation_id': activation_id, 'service': service,
-                'country': country, 'operator': operator, 'phone': phone_number,
-                'price': price_toman, 'status': 'PENDING'
-            }
-            local_id = compat_order_save(order_info)
-
-            if local_id:
-                details_url = f"{BOT_CONFIG['website_url']}/number_details/{local_id}"
-                keyboard = types.InlineKeyboardMarkup(row_width=1)
-                keyboard.add(
-                    types.InlineKeyboardButton(get_text(user_id, 'purchase.get_code'), callback_data=f"get_code_{activation_id}"),
-                    types.InlineKeyboardButton(get_text(user_id, 'purchase.cancel_order'), callback_data=f"cancel_order_{activation_id}"),
-                    types.InlineKeyboardButton(get_text(user_id, 'purchase.view_details_web'), url=details_url),
-                    types.InlineKeyboardButton(get_text(user_id, 'navigation.back_to_services'), callback_data="back_to_services")
-                )
-                _bot.edit_message_text(
-                    get_text(user_id, 'purchase.success', service=service, country=country_name,
-                             phone=phone_number, operator=operator, price=price_toman),
-                    call.message.chat.id, call.message.message_id, reply_markup=keyboard
-                )
-            else:
-                _bot.edit_message_text(get_text(user_id, 'purchase.save_error'), call.message.chat.id, call.message.message_id)
-        else:
-            error_msg = result.get('error', 'Unknown') if isinstance(result, dict) else str(result)
-            _bot.edit_message_text(get_text(user_id, 'purchase.buy_error', error=error_msg),
-                                   call.message.chat.id, call.message.message_id)
-
-    except Exception as e:
-        logger.error(f"Error in handle_buy_number: {e}", exc_info=True)
-        _bot.answer_callback_query(call.id, get_text(call.from_user.id, 'errors.general_short'))
-
-
+# ── get_code_ ─────────────────────────────────────────────
 @router.callback('get_code_')
 def handle_get_code(call):
-    from telebot import types
-    from compat.legacy_facade import (
-        sms_check_status as compat_sms_check_status,
-        order_update_status as compat_order_update_status,
-        order_save_code as compat_order_save_code,
-    )
-
+    from compat.legacy_facade import sms_check_status, order_update_status, order_save_code
     try:
         user_id = call.from_user.id
         order_id = call.data.split('_')[2]
-
-        result = compat_sms_check_status(int(order_id))
-        status = result.get('status', 'ERROR')
-
+        check = sms_check_status(int(order_id))
+        status = check.get('status', 'ERROR')
         if status == 'RECEIVED':
-            code_text = result.get('code', '')
-            keyboard = types.InlineKeyboardMarkup()
-            keyboard.add(types.InlineKeyboardButton(get_text(user_id, 'purchase.view_details'),
-                          url=f"{BOT_CONFIG['website_url']}/number_details/{order_id}"))
-            keyboard.add(types.InlineKeyboardButton(get_text(user_id, 'navigation.back_to_main'), callback_data="back_to_main"))
-
-            compat_order_update_status(int(order_id), 'RECEIVED')
-            compat_order_save_code(int(order_id), code_text)
-
-            _bot.edit_message_text(
-                f"✅ {get_text(user_id, 'order.code_received', phone='', code=code_text, time='')}\n\n📱 کد: <b>{code_text}</b>",
-                call.message.chat.id, call.message.message_id, reply_markup=keyboard, parse_mode='HTML'
-            )
+            code_text = check.get('code', '')
+            order_update_status(int(order_id), 'RECEIVED')
+            order_save_code(int(order_id), code_text)
+            from telebot import types
+            kb = types.InlineKeyboardMarkup()
+            kb.add(types.InlineKeyboardButton('🌐 ' + get_text(user_id, 'purchase.view_details'),
+                                               url=f"{BOT_CONFIG['website_url']}/number_details/{order_id}"))
+            kb.add(types.InlineKeyboardButton(get_text(user_id, 'navigation.back_to_main'), callback_data="back_to_main"))
+            _bot.edit_message_text(f"✅ Code: <b>{code_text}</b>", call.message.chat.id,
+                                   call.message.message_id, reply_markup=kb, parse_mode='HTML')
         elif status == 'WAITING':
             _bot.answer_callback_query(call.id, get_text(user_id, 'order.code_not_received'))
-        elif status == 'CANCELLED':
-            _bot.answer_callback_query(call.id, get_text(user_id, 'order.cancelled_simple', refund=''))
         else:
-            _bot.answer_callback_query(call.id, get_text(user_id, 'order.code_not_received'))
-
+            _bot.answer_callback_query(call.id, '⏳ ' + status)
     except Exception as e:
         logger.error(f"Error in get_code: {e}")
-        _bot.answer_callback_query(call.id, get_text(call.from_user.id, 'errors.general'))
+        _bot.answer_callback_query(call.id, get_text(call.from_user.id, 'errors.general_short'))
 
 
+# ── cancel_order_ ─────────────────────────────────────────
 @router.callback('cancel_order_')
 def handle_cancel_order(call):
+    from compat.legacy_facade import sms_cancel_number, order_cancel, get_balance
     from telebot import types
-    from compat.legacy_facade import (
-        sms_cancel_number as compat_sms_cancel_number,
-        order_cancel as compat_order_cancel,
-        get_balance as compat_get_balance,
-    )
-
     try:
         user_id = call.from_user.id
         order_id = int(call.data.split('_')[2])
-
         _bot.edit_message_text(get_text(user_id, 'order.cancelling'), call.message.chat.id, call.message.message_id)
-
-        cancel_result = compat_sms_cancel_number(order_id)
+        cancel_result = sms_cancel_number(order_id)
         if cancel_result.get('success'):
-            compat_order_cancel(order_id)
-            balance = compat_get_balance(user_id)
-            success_msg = get_text(user_id, 'order.cancelled', balance=balance, refund=0)
-            keyboard = types.InlineKeyboardMarkup()
-            keyboard.add(types.InlineKeyboardButton(get_text(user_id, 'navigation.back_to_menu'), callback_data="buy_number"))
-            _bot.edit_message_text(success_msg, call.message.chat.id, call.message.message_id, reply_markup=keyboard)
+            oc = order_cancel(order_id)
+            if oc.get('success'):
+                bal = get_balance(user_id)
+                kb = types.InlineKeyboardMarkup()
+                kb.add(types.InlineKeyboardButton(get_text(user_id, 'navigation.back_to_menu'), callback_data="buy_number"))
+                _bot.edit_message_text(get_text(user_id, 'order.cancelled_simple', refund='OK') + f"\n💰 Balance: {bal:,} T",
+                                       call.message.chat.id, call.message.message_id, reply_markup=kb)
+            else:
+                _bot.edit_message_text(get_text(user_id, 'order.cancelled_warning', warning=oc.get('error', '')),
+                                       call.message.chat.id, call.message.message_id)
         else:
-            _bot.edit_message_text(get_text(user_id, 'order.cancel_error'), call.message.chat.id, call.message.message_id)
-
+            _bot.edit_message_text(get_text(user_id, 'order.cancel_error'),
+                                   call.message.chat.id, call.message.message_id)
     except Exception as e:
-        logger.error(f"Error in cancel_order: {e}", exc_info=True)
-        _bot.edit_message_text(get_text(call.from_user.id, 'order.cancel_error'),
+        logger.error(f"Error in cancel_order: {e}")
+        _bot.edit_message_text(get_text(call.from_user.id, 'errors.general'),
                                call.message.chat.id, call.message.message_id)
-
-
-@router.callback('my_orders')
-def handle_my_orders(call):
-    from telebot import types
-    user_id = call.from_user.id
-    orders_url = f"{BOT_CONFIG['webhook_url'].rstrip('/')}/orders/{user_id}"
-    keyboard = types.InlineKeyboardMarkup(row_width=1)
-    keyboard.add(types.InlineKeyboardButton(get_text(user_id, 'order.view_orders_web'), url=orders_url))
-    keyboard.add(types.InlineKeyboardButton(get_text(user_id, 'navigation.back_to_menu'), callback_data="back_to_main"))
-    _bot.edit_message_text(get_text(user_id, 'order.my_orders_title'), call.message.chat.id, call.message.message_id, reply_markup=keyboard)

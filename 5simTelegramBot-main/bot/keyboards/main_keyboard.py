@@ -18,7 +18,7 @@ def main_menu_keyboard(user_id: int) -> types.InlineKeyboardMarkup:
         types.InlineKeyboardButton(get_text(user_id, 'main_menu.my_orders'), callback_data='my_orders'),
         types.InlineKeyboardButton(get_text(user_id, 'main_menu.help'), callback_data='help'),
         types.InlineKeyboardButton(get_text(user_id, 'main_menu.add_funds'), callback_data='add_funds'),
-        types.InlineKeyboardButton('🌐 ' + get_text(user_id, 'language.select_title'), callback_data='language_menu')
+        types.InlineKeyboardButton('🌐 زبان', callback_data='language_menu')
     )
 
     # Admin button (admin_ids check done in handler, not here)
