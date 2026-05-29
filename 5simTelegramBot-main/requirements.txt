@@ -4,6 +4,9 @@ Flask==2.3.3
 requests==2.31.0
 python-dotenv==1.0.0
 
+# ── Database: PostgreSQL ─────────────────────────────────
+psycopg2-binary==2.9.10
+
 # ── Infrastructure ────────────────────────────────────────
 redis==5.0.1
 celery==5.3.4

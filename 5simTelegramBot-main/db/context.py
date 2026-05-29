@@ -1,22 +1,8 @@
 """
-db/context.py — Database Context / Session Layer
+db/context.py — Transaction-Safe Database Context (PostgreSQL)
 ─────────────────────────────────────────────────
-Provides a transaction-safe context manager for database operations.
-Ensures ALL financial operations use BEGIN/COMMIT/ROLLBACK.
-
-Usage:
-    from db.context import db_context
-    
-    with db_context('users_db') as db:
-        db.execute("UPDATE users SET balance = ? WHERE user_id = ?", (1000, 123))
-        db.execute("INSERT INTO transactions ...")
-        # Auto-commits on success, auto-rollbacks on exception
-
-    # Or with explicit transaction control:
-    with db_context('users_db', transactional=True) as db:
-        db.execute("...")
-        db.execute("...")
-        # Commit only if no exception occurs
+Auto-commit for reads, BEGIN/COMMIT/ROLLBACK for writes.
+Thread-safe via ConnectionManager pool.
 """
 
 import logging
@@ -26,89 +12,72 @@ logger = logging.getLogger(__name__)
 
 
 class DatabaseContext:
-    """
-    Transaction-safe database context manager.
-    
-    Patterns:
-    - Auto-commit for read operations (transactional=False)
-    - BEGIN/COMMIT/ROLLBACK for write operations (transactional=True)
-    - All financial operations MUST use transactional=True
-    """
-
-    def __init__(self, db_name: str, transactional: bool = True):
+    def __init__(self, db_name: str = 'default', transactional: bool = True):
         self._db_name = db_name
         self._transactional = transactional
         self._cm = ConnectionManager.get_instance()
         self._conn = None
         self._cursor = None
 
-    def __enter__(self) -> 'DatabaseContext':
+    def __enter__(self):
         self._conn = self._cm.get_connection(self._db_name)
         self._cursor = self._conn.cursor()
-
         if self._transactional:
-            self._conn.execute('BEGIN')
-            logger.debug(f"Transaction BEGIN on {self._db_name}")
-
+            self._cursor.execute('BEGIN')
+            logger.debug("Transaction BEGIN")
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         if exc_type is not None:
-            # Exception occurred — ROLLBACK
             if self._transactional:
                 try:
                     self._conn.rollback()
-                    logger.warning(
-                        f"Transaction ROLLBACK on {self._db_name} "
-                        f"due to: {exc_type.__name__}: {exc_val}"
-                    )
+                    logger.warning(f"Transaction ROLLBACK due to: {exc_type.__name__}: {exc_val}")
                 except Exception as e:
-                    logger.error(f"Rollback error on {self._db_name}: {e}")
-            return False  # Re-raise the exception
+                    logger.error(f"Rollback error: {e}")
+            self._cm.put_connection(self._conn)
+            return False
         else:
-            # Success — COMMIT
             if self._transactional:
                 try:
                     self._conn.commit()
-                    logger.debug(f"Transaction COMMIT on {self._db_name}")
+                    logger.debug("Transaction COMMIT")
                 except Exception as e:
-                    logger.error(f"Commit error on {self._db_name}: {e}")
+                    logger.error(f"Commit error: {e}")
                     raise
+            self._cm.put_connection(self._conn)
             return True
 
-    def execute(self, query: str, params: tuple = ()) -> 'DatabaseContext':
-        """Execute a parameterized query. Returns self for chaining."""
-        self._cm.execute(self._db_name, query, params)
+    def execute(self, query: str, params: tuple = ()):
+        query = query.replace('?', '%s')
+        self._cursor.execute(query, params)
         return self
 
     def fetchone(self, query: str, params: tuple = ()):
-        """Execute and fetch one row."""
-        cursor = self._cm.execute(self._db_name, query, params)
-        return cursor.fetchone()
+        query = query.replace('?', '%s')
+        self._cursor.execute(query, params)
+        rows = self._cursor.fetchall()
+        if rows:
+            return rows[0]
+        return None
 
     def fetchall(self, query: str, params: tuple = ()):
-        """Execute and fetch all rows."""
-        cursor = self._cm.execute(self._db_name, query, params)
-        return cursor.fetchall()
+        query = query.replace('?', '%s')
+        self._cursor.execute(query, params)
+        return self._cursor.fetchall()
 
     @property
-    def lastrowid(self) -> int:
-        """Return the last inserted row id."""
-        return self._cursor.lastrowid if self._cursor else 0
+    def lastrowid(self):
+        if self._cursor and self._cursor.description:
+            try:
+                return self._cursor.fetchone()[0]
+            except: pass
+        return 0
 
     @property
-    def rowcount(self) -> int:
-        """Return the number of affected rows."""
+    def rowcount(self):
         return self._cursor.rowcount if self._cursor else 0
 
 
-# ── Convenience function ───────────────────────────────────────
-def db_context(db_name: str, transactional: bool = True) -> DatabaseContext:
-    """
-    Create a database context for the given database.
-    
-    Args:
-        db_name: Database name ('users_db', 'admin_db', or 'bot.db')
-        transactional: Use BEGIN/COMMIT/ROLLBACK (True for writes!)
-    """
+def db_context(db_name: str = 'default', transactional: bool = True):
     return DatabaseContext(db_name, transactional=transactional)

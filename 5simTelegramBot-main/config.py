@@ -59,10 +59,11 @@ CURRENCY_CONFIG = {
     'navasan_api_key': os.getenv('NAVASAN_API_KEY', 'free26Ln3Pt7qXlEydjJYJEKDcjEYKuS')
 }
 
-# تنظیمات دیتابیس
+# تنظیمات دیتابیس — PostgreSQL (single database)
+DATABASE_URL = os.getenv('DATABASE_URL', 'postgresql://smsbot:smsbot_secret@postgres:5432/smsbot')
 DB_CONFIG = {
-    'users_db': os.getenv('USERS_DB', 'users.db'),
-    'admin_db': os.getenv('ADMIN_DB', 'admin.db')
+    'users_db': 'default',
+    'admin_db': 'default',
 }
 
 # اضافه کردن تنظیمات درگاه پرداخت

@@ -1,7 +1,6 @@
-# ── docker-compose.yml — Multi-Service Enterprise Architecture ────────
-# Services: nginx (reverse proxy) → bot + redis + worker + beat
+# ── docker-compose.yml — Enterprise Architecture (PostgreSQL) ──
+# Services: nginx → bot → redis + postgres + worker + beat
 # All containers on internal network. Health checks for dependency ordering.
-# Start with: docker compose up -d
 
 x-common: &common
   restart: unless-stopped
@@ -10,7 +9,26 @@ x-common: &common
     - internal
 
 services:
-  # ── Nginx: Reverse Proxy + SSL Termination + Rate Limiting ──
+  # ── PostgreSQL 16 ─────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: smsbot-postgres
+    environment:
+      POSTGRES_USER: smsbot
+      POSTGRES_PASSWORD: smsbot_secret
+      POSTGRES_DB: smsbot
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smsbot -d smsbot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ── Nginx: Reverse Proxy + SSL ────────────────────────
   nginx:
     image: nginx:1.25-alpine
     container_name: smsbot-nginx
@@ -34,7 +52,7 @@ services:
       retries: 3
       start_period: 25s
 
-  # ── Bot: Main Telegram Bot + Flask Webhook ─────────────────
+  # ── Bot: Telegram Bot + Flask ─────────────────────────
   bot:
     <<: *common
     build:
@@ -47,10 +65,9 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-    networks:
-      - internal
+      postgres:
+        condition: service_healthy
     volumes:
-      - bot_data:/app/data/backups
       - bot_logs:/app/logs
     entrypoint: ["./docker-entrypoint.sh"]
     command: ["python", "bot.py"]
@@ -59,24 +76,17 @@ services:
       interval: 15s
       timeout: 5s
       retries: 3
-      start_period: 20s
+      start_period: 30s
 
-  # ── Redis: Cache + Queue Backend + Rate Limiting ───────────
+  # ── Redis: Cache + Queue ──────────────────────────────
   redis:
     image: redis:7-alpine
     container_name: smsbot-redis
-    ports:
-      - "6379:6379"
     volumes:
       - redis_data:/data
     command: >
-      redis-server
-      --appendonly yes
-      --maxmemory 256mb
-      --maxmemory-policy allkeys-lru
-      --save 900 1
-      --save 300 10
-      --save 60 10000
+      redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+      --save 900 1 --save 300 10 --save 60 10000
     networks:
       - internal
     healthcheck:
@@ -84,8 +94,9 @@ services:
       interval: 10s
       timeout: 3s
       retries: 3
+    restart: unless-stopped
 
-  # ── Worker: Background Task Processor (Celery) ─────────────
+  # ── Worker: Celery ────────────────────────────────────
   worker:
     <<: *common
     build:
@@ -98,11 +109,12 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
     volumes:
-      - bot_data:/app/data/backups
       - bot_logs:/app/logs
 
-  # ── Beat: Celery Beat Scheduler ────────────────────────────
+  # ── Beat: Celery Beat Scheduler ───────────────────────
   beat:
     <<: *common
     build:
@@ -115,9 +127,11 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
 
 volumes:
-  bot_data:
+  postgres_data:
     driver: local
   bot_logs:
     driver: local

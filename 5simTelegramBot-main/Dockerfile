@@ -16,9 +16,9 @@ FROM python:3.11-slim-bookworm AS production
 # Create non-root user
 RUN groupadd -r botuser && useradd -r -g botuser botuser
 
-# Install runtime deps only
+# Install runtime deps + PostgreSQL client libs
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl ca-certificates && \
+    curl ca-certificates libpq-dev && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -29,9 +29,9 @@ COPY --from=builder /root/.local /home/botuser/.local
 # Copy application code
 COPY --chown=botuser:botuser . .
 
-# Create writable directories + fix ownership for non-root user
+# Create writable directories
 RUN mkdir -p /app/logs /app/data/backups && \
-    chown -R botuser:botuser /app
+    chown -R botuser:botuser /app/logs /app/data
 
 # Ensure scripts are executable
 RUN chmod +x docker-entrypoint.sh 2>/dev/null || true
