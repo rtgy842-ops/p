@@ -489,156 +489,42 @@ def handle_service_selection(call):
 
 currency_service = CurrencyService()
 
+# ── Enterprise Database Functions ────────────────────────────
+# All direct sqlite3.connect() calls replaced with enterprise layer.
+# Tables created via db/migrations.py at startup.
+
 def create_required_tables():
-    try:
-        conn = sqlite3.connect('bot.db')
-        cursor = conn.cursor()
-        
-        # ایجاد جدول settings
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS settings (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            )
-        ''')
-        
-        # تنظیمات پیش‌فرض
-        default_settings = [
-            ('usd_rate', '60000'),  # نرخ پیش‌فرض دلار به تومان
-            ('profit_percentage', '30'),  # درصد سود پیش‌فرض
-        ]
-        
-        # اضافه کردن تنظیمات پیش‌فرض
-        cursor.executemany('''
-            INSERT OR IGNORE INTO settings (key, value)
-            VALUES (?, ?)
-        ''', default_settings)
-        
-        # ایجاد جدول سفارش‌ها
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS orders (
-                id INTEGER PRIMARY KEY,
-                phone_number TEXT,
-                service TEXT,
-                country TEXT,
-                operator TEXT,
-                price INTEGER,
-                status TEXT,
-                date DATETIME,
-                user_id INTEGER,
-                FOREIGN KEY (user_id) REFERENCES users(id)
-            )
-        """)
-        
-        # ایجاد جدول کدهای فعال‌سازی
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS activation_codes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                order_id INTEGER,
-                code TEXT,
-                status TEXT,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (order_id) REFERENCES orders(id)
-            )
-        """)
-        
-        conn.commit()
-        conn.close()
-        logging.info("Required tables created successfully")
-        
-    except Exception as e:
-        logging.error(f"Error creating required tables: {e}")
-        raise
+    """No-op: tables created by MigrationManager at startup."""
+    logging.info("Tables handled by enterprise migration system")
+    return True
 
 def get_price_for_operator(country, product, operator):
+    """Calculate price using enterprise settings + compat API."""
     try:
-        conn = sqlite3.connect('bot.db')
-        cursor = conn.cursor()
-        
-        # اول مطمئن شویم که جدول settings وجود دارد
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS settings (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            )
-        ''')
-        
-        # بررسی وجود تنظیمات پیش‌فرض
-        cursor.execute('SELECT COUNT(*) FROM settings')
-        if cursor.fetchone()[0] == 0:
-            cursor.execute('''
-                INSERT INTO settings (key, value) VALUES
-                ("usd_rate", "60000"),
-                ("profit_percentage", "20")
-            ''')
-            conn.commit()
-        
-        # دریافت نرخ دلار و درصد سود
-        cursor.execute('SELECT value FROM settings WHERE key = "usd_rate"')
-        usd_rate = float(cursor.fetchone()[0]) if usd_rate_result else 0
-        
-        cursor.execute('SELECT value FROM settings WHERE key = "profit_percentage"')
-        profit_percentage = float(cursor.fetchone()[0]) if profit_result else 0
-        
-        # دریافت قیمت پایه
+        usd_rate = admin_config.get_usd_rate()
+        profit_percentage = admin_config.get_profit_percentage()
         base_price = get_prices(product)
         if not base_price:
             logging.error(f"No base price found for product {product}")
             return None
-            
-        # محاسبه قیمت نهایی
         final_price = base_price * usd_rate * (1 + profit_percentage/100)
-
-        logging.info(f"Price calculation successful: base={base_price}, rate={usd_rate}, profit={profit_percentage}%")
+        logging.info(f"Price: base={base_price}, rate={usd_rate}, profit={profit_percentage}%, final={final_price}")
         return round(final_price, 2)
-        
-    except sqlite3.Error as e:
-        logging.error(f"Database error in price calculation: {e}")
-        return None
     except Exception as e:
-        logging.error(f"General error in price calculation: {e}")
+        logging.error(f"Error in price calculation: {e}")
         return None
-    finally:
-        if conn:
-            conn.close()
 
 def get_current_usd_rate():
+    """Get USD rate from admin_config (enterprise layer)."""
     try:
-        # همیشه از مقدار ذخیره شده در دیتابیس استفاده می‌کنیم
-        conn = sqlite3.connect('admin.db')  # استفاده از admin.db به جای bot.db
-        cursor = conn.cursor()
-        cursor.execute("SELECT value FROM settings WHERE key='usd_rate'")
-        result = cursor.fetchone()
-        conn.close()
-        
-        if result:
-            return float(result[0])
-        else:
-            logging.error("نرخ دلار در دیتابیس یافت نشد")
-            return 0  # برگرداندن صفر در صورت عدم وجود مقدار
+        return admin_config.get_usd_rate()
     except Exception as e:
-        logging.error(f"خطا در دریافت نرخ دلار از دیتابیس: {e}")
-        return 0  # برگرداندن صفر در صورت بروز خطا
+        logging.error(f"Error getting USD rate: {e}")
+        return 0
 
 def ensure_settings_table_exists():
-    try:
-        conn = sqlite3.connect('bot.db')
-        cursor = conn.cursor()
-        
-        # بررسی وجود جدول
-        cursor.execute(''' SELECT count(name) FROM sqlite_master WHERE type='table' AND name='settings' ''')
-        
-        # اگر جدول وجود نداشت، آن را بساز
-        if cursor.fetchone()[0] == 0:
-            create_required_tables()
-            logging.info("Settings table created")
-        
-        conn.close()
-        return True
-        
-    except Exception as e:
-        logging.error(f"Error checking settings table: {e}")
-        return False
+    """No-op: settings table created by migrations."""
+    return True
 
 # در ابتدای فایل، این import را اضافه کنید
 from operator_config import OperatorConfig
@@ -1049,16 +935,9 @@ def handle_users_list(call):
             bot.answer_callback_query(call.id, get_text(user_id, 'errors.no_access_section'))
             return
             
-        conn = sqlite3.connect('users.db')
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT user_id, balance
-            FROM users
-            ORDER BY user_id DESC
-            LIMIT 10
-        ''')
-        users = cursor.fetchall()
-        conn.close()
+        from db.repositories.user_repository import UserRepository
+        repo = UserRepository()
+        users = repo.list_recent(10)
         
         if not users:
             text = get_text(user_id, 'admin.users_list_empty')
@@ -1115,23 +994,21 @@ def process_user_search(message):
             return
             
         target_id = int(search_term)
-        conn = sqlite3.connect('users.db')
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT user_id, balance FROM users WHERE user_id = ?', (target_id,))
-        
-        user = cursor.fetchone()
-        conn.close()
+        from db.repositories.user_repository import UserRepository
+        repo = UserRepository()
+        user = repo.find_by_id(target_id)
         
         if user:
+            uid = user['user_id'] if isinstance(user, dict) else user[0]
+            bal = user['balance'] if isinstance(user, dict) else user[1]
             keyboard = types.InlineKeyboardMarkup(row_width=2)
             keyboard.add(
-                types.InlineKeyboardButton(get_text(user_id, 'admin.modify_balance'), callback_data=f"modify_balance_{user[0]}"),
-                types.InlineKeyboardButton(get_text(user_id, 'admin.send_message'), callback_data=f"send_message_{user[0]}")
+                types.InlineKeyboardButton(get_text(user_id, 'admin.modify_balance'), callback_data=f"modify_balance_{uid}"),
+                types.InlineKeyboardButton(get_text(user_id, 'admin.send_message'), callback_data=f"send_message_{uid}")
             )
             keyboard.add(types.InlineKeyboardButton(get_text(user_id, 'navigation.back_to_users'), callback_data="manage_users"))
             
-            text = get_text(user_id, 'admin.search_user_found', user_id=user[0], balance=user[1])
+            text = get_text(user_id, 'admin.search_user_found', user_id=uid, balance=bal)
             
             bot.reply_to(message, text, reply_markup=keyboard)
         else:
@@ -1255,11 +1132,9 @@ def process_broadcast(message):
         return
         
     try:
-        conn = sqlite3.connect('users.db')
-        cursor = conn.cursor()
-        cursor.execute('SELECT user_id FROM users')
-        users = cursor.fetchall()
-        conn.close()
+        from db.repositories.user_repository import UserRepository
+        repo = UserRepository()
+        users = repo.get_all_ids()
         
         success = 0
         failed = 0
@@ -1303,13 +1178,7 @@ def handle_set_profit(call):
             bot.answer_callback_query(call.id, get_text(user_id, 'errors.no_access_section'))
             return
             
-        conn = sqlite3.connect('admin.db')
-        cursor = conn.cursor()
-        cursor.execute('SELECT value FROM settings WHERE key = "profit_percentage"')
-        current_profit = cursor.fetchone()
-        conn.close()
-        
-        current_profit = float(current_profit[0]) if current_profit else 0
+        current_profit = admin_config.get_profit_percentage()
             
         msg = bot.edit_message_text(
             get_text(user_id, 'admin.profit_current', profit=current_profit),
@@ -1334,17 +1203,7 @@ def process_profit_percentage(message):
             bot.reply_to(message, get_text(admin_id, 'admin.profit_negative'))
             return
             
-        conn = sqlite3.connect('admin.db')
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT value FROM settings WHERE key = "profit_percentage"')
-        if cursor.fetchone() is None:
-            cursor.execute('INSERT INTO settings (key, value) VALUES (?, ?)', ('profit_percentage', str(profit)))
-        else:
-            cursor.execute('UPDATE settings SET value = ? WHERE key = "profit_percentage"', (str(profit),))
-        
-        conn.commit()
-        conn.close()
+        admin_config.set_profit_percentage(profit)
         
         keyboard = types.InlineKeyboardMarkup(row_width=2)
         keyboard.add(
@@ -1391,11 +1250,7 @@ def process_usd_rate(message):
             return
             
         rate = float(message.text)
-        conn = sqlite3.connect('admin.db')
-        cursor = conn.cursor()
-        cursor.execute('UPDATE settings SET value = ? WHERE key = "usd_rate"', (rate,))
-        conn.commit()
-        conn.close()
+        admin_config.set_usd_rate(rate)
         
         keyboard = types.InlineKeyboardMarkup()
         keyboard.add(types.InlineKeyboardButton(get_text(admin_id, 'navigation.back_to_panel'), callback_data="admin_panel"))
@@ -1418,16 +1273,9 @@ def handle_transactions(call):
             bot.answer_callback_query(call.id, get_text(user_id, 'errors.no_access_section'))
             return
             
-        conn = sqlite3.connect('users.db')
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT cp.payment_id, cp.user_id, cp.amount, cp.status, cp.created_at
-            FROM card_payments cp
-            ORDER BY cp.created_at DESC
-            LIMIT 5
-        ''')
-        transactions = cursor.fetchall()
-        conn.close()
+        from db.repositories.card_payment_repository import CardPaymentRepository
+        repo = CardPaymentRepository()
+        transactions = repo.list_recent(5)
         
         if not transactions:
             text = get_text(user_id, 'transactions.empty')
@@ -1436,12 +1284,17 @@ def handle_transactions(call):
         else:
             text = get_text(user_id, 'transactions.recent_title', page=1)
             for t in transactions:
-                status_emoji = get_text(user_id, 'transactions.status_pending') if t[3] == 'pending' else get_text(user_id, 'transactions.status_approved') if t[3] == 'approved' else get_text(user_id, 'transactions.status_rejected')
-                text += f"🆔 Payment ID: {t[0]}\n"
-                text += f"👤 User: {t[1]}\n"
-                text += f"💰 Amount: {t[2]:,}\n"
-                text += f"📝 Status: {status_emoji} {t[3]}\n"
-                text += f"🕒 Date: {t[4]}\n"
+                pid = t['payment_id'] if isinstance(t, dict) else t[0]
+                uid = t['user_id'] if isinstance(t, dict) else t[1]
+                amt = t['amount'] if isinstance(t, dict) else t[2]
+                st = t['status'] if isinstance(t, dict) else t[3]
+                ct = t['created_at'] if isinstance(t, dict) else t[4]
+                status_emoji = get_text(user_id, 'transactions.status_pending') if st == 'pending' else get_text(user_id, 'transactions.status_approved') if st == 'approved' else get_text(user_id, 'transactions.status_rejected')
+                text += f"🆔 Payment ID: {pid}\n"
+                text += f"👤 User: {uid}\n"
+                text += f"💰 Amount: {amt:,}\n"
+                text += f"📝 Status: {status_emoji} {st}\n"
+                text += f"🕒 Date: {ct}\n"
                 text += "➖➖➖➖➖➖➖➖\n"
             
             keyboard = types.InlineKeyboardMarkup(row_width=2)
@@ -1490,16 +1343,9 @@ def handle_transactions_pagination(call):
             
         offset = (page - 1) * 5
         
-        conn = sqlite3.connect('users.db')
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT cp.payment_id, cp.user_id, cp.amount, cp.status, cp.created_at
-            FROM card_payments cp
-            ORDER BY cp.created_at DESC
-            LIMIT 5 OFFSET ?
-        ''', (offset,))
-        transactions = cursor.fetchall()
-        conn.close()
+        from db.repositories.card_payment_repository import CardPaymentRepository
+        repo = CardPaymentRepository()
+        transactions = repo.list_paginated(offset, 5)
         
         if not transactions:
             text = get_text(user_id, 'transactions.no_page')
@@ -1508,12 +1354,17 @@ def handle_transactions_pagination(call):
         else:
             text = get_text(user_id, 'transactions.recent_title', page=page)
             for t in transactions:
-                status_emoji = get_text(user_id, 'transactions.status_pending') if t[3] == 'pending' else get_text(user_id, 'transactions.status_approved') if t[3] == 'approved' else get_text(user_id, 'transactions.status_rejected')
-                text += f"🆔 Payment ID: {t[0]}\n"
-                text += f"👤 User: {t[1]}\n"
-                text += f"💰 Amount: {t[2]:,}\n"
-                text += f"📝 Status: {status_emoji} {t[3]}\n"
-                text += f"🕒 Date: {t[4]}\n"
+                pid = t['payment_id'] if isinstance(t, dict) else t[0]
+                uid = t['user_id'] if isinstance(t, dict) else t[1]
+                amt = t['amount'] if isinstance(t, dict) else t[2]
+                st = t['status'] if isinstance(t, dict) else t[3]
+                ct = t['created_at'] if isinstance(t, dict) else t[4]
+                status_emoji = get_text(user_id, 'transactions.status_pending') if st == 'pending' else get_text(user_id, 'transactions.status_approved') if st == 'approved' else get_text(user_id, 'transactions.status_rejected')
+                text += f"🆔 Payment ID: {pid}\n"
+                text += f"👤 User: {uid}\n"
+                text += f"💰 Amount: {amt:,}\n"
+                text += f"📝 Status: {status_emoji} {st}\n"
+                text += f"🕒 Date: {ct}\n"
                 text += "➖➖➖➖➖➖➖➖\n"
             
             keyboard = types.InlineKeyboardMarkup(row_width=2)
@@ -1536,29 +1387,13 @@ def handle_transactions_pagination(call):
         bot.answer_callback_query(call.id, get_text(call.from_user.id, 'errors.general_short'))
 
 def save_user(user):
+    """Save user via enterprise repository."""
     try:
-        conn = sqlite3.connect('users.db')
-        cursor = conn.cursor()
-        
-        # بررسی وجود کاربر
-        cursor.execute('SELECT user_id FROM users WHERE user_id = ?', (user.id,))
-        existing_user = cursor.fetchone()
-        
-        if existing_user is None:
-            # اگر کاربر وجود نداشت، اضافه کن با موجودی صفر
-            cursor.execute('''
-                INSERT INTO users (user_id, balance)
-                VALUES (?, 0)
-            ''', (user.id,))
-        
-        conn.commit()
-        cursor.close()
-        conn.close()
-        return True
-        
+        from db.repositories.user_repository import UserRepository
+        repo = UserRepository()
+        return repo.create_if_not_exists(user.id)
     except Exception as e:
         logging.error(f"Error saving user: {e}")
-        print(f"Error saving user: {e}")  # اضافه کردن لاگ اضافی برای دیباگ
         return False
 
 @bot.callback_query_handler(func=lambda call: call.data == "manage_channels")

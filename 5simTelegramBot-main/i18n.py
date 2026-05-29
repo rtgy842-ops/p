@@ -1,173 +1,125 @@
 """
-i18n.py — Translation Service for 5sim/HeroSMS Telegram Bot
-Supports: Persian (fa) | English (en) | Arabic (ar)
+i18n.py — Internationalization (Enterprise Refactored)
+─────────────────────────────────────────────────
+Multi-language support (fa, en, ar).
+Uses SettingsRepository for user language persistence.
+No direct sqlite3 connections.
 """
+
 import json
 import os
-import sqlite3
 import logging
 from config import DB_CONFIG
 
 logger = logging.getLogger(__name__)
 
-# ── Locale file paths ──────────────────────────────────────────
-LOCALES_DIR = os.path.join(os.path.dirname(__file__), 'locales')
-SUPPORTED_LANGUAGES = ['fa', 'en', 'ar']
+# Load translation files
+_LOCALES = {}
+_locale_dir = os.path.join(os.path.dirname(__file__), 'locales')
+
+for filename in os.listdir(_locale_dir):
+    if filename.endswith('.json'):
+        lang_code = filename.replace('.json', '')
+        filepath = os.path.join(_locale_dir, filename)
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                _LOCALES[lang_code] = json.load(f)
+                logger.info(f"Loaded locale: {lang_code}")
+        except Exception as e:
+            logger.error(f"Failed to load locale {lang_code}: {e}")
+
 DEFAULT_LANGUAGE = 'fa'
 
-# ── Load all locale JSONs at module import ─────────────────────
-_translations: dict[str, dict] = {}
 
-def _load_locales() -> None:
-    """بارگذاری تمام فایل‌های JSON ترجمه"""
-    global _translations
-    for lang in SUPPORTED_LANGUAGES:
-        path = os.path.join(LOCALES_DIR, f'{lang}.json')
-        try:
-            with open(path, 'r', encoding='utf-8') as f:
-                _translations[lang] = json.load(f)
-            logger.info(f"✅ Locale loaded: {lang} ({path})")
-        except FileNotFoundError:
-            logger.warning(f"⚠️ Locale file not found: {path}")
-            _translations[lang] = {}
-        except json.JSONDecodeError as e:
-            logger.error(f"❌ Invalid JSON in {path}: {e}")
-            _translations[lang] = {}
-
-_load_locales()
+def get_all_languages():
+    """Return list of available languages."""
+    langs = []
+    for code, data in _LOCALES.items():
+        if '_meta' in data:
+            langs.append({
+                'code': code,
+                'name': data['_meta'].get('language', code),
+                'direction': data['_meta'].get('direction', 'ltr'),
+            })
+    return langs
 
 
-def get_user_language(user_id: int) -> str:
-    """
-    دریافت زبان ذخیره شده کاربر از دیتابیس.
-    برمی‌گرداند: 'fa', 'en', یا 'ar'
-    """
+def get_user_language(user_id):
+    """Get user's language preference from database."""
     try:
-        conn = sqlite3.connect(DB_CONFIG['users_db'])
-        cursor = conn.cursor()
-        cursor.execute('SELECT language FROM users WHERE user_id = ?', (user_id,))
-        result = cursor.fetchone()
-        conn.close()
-        
-        if result and result[0] and result[0] in SUPPORTED_LANGUAGES:
-            return result[0]
-        return DEFAULT_LANGUAGE
-    except sqlite3.OperationalError:
-        # جدول users یا ستون language هنوز وجود ندارد
-        return DEFAULT_LANGUAGE
+        from db.repositories.user_repository import UserRepository
+        repo = UserRepository()
+        lang = repo.get_language(user_id)
+        return lang if lang in _LOCALES else DEFAULT_LANGUAGE
     except Exception as e:
-        logger.error(f"Error getting user language for {user_id}: {e}")
+        logger.error(f"Error getting user language: {e}")
         return DEFAULT_LANGUAGE
 
 
-def set_user_language(user_id: int, language: str) -> bool:
-    """
-    ذخیره زبان کاربر در دیتابیس.
-    برمی‌گرداند: True اگر موفق بود
-    """
-    if language not in SUPPORTED_LANGUAGES:
-        logger.warning(f"Unsupported language: {language}")
-        return False
-    
+def set_user_language(user_id, lang_code):
+    """Set user's language preference."""
     try:
-        conn = sqlite3.connect(DB_CONFIG['users_db'])
-        cursor = conn.cursor()
-        
-        # اطمینان از وجود کاربر
-        cursor.execute(
-            'INSERT OR IGNORE INTO users (user_id, balance, language) VALUES (?, 0, ?)',
-            (user_id, language)
-        )
-        # بروزرسانی زبان
-        cursor.execute(
-            'UPDATE users SET language = ? WHERE user_id = ?',
-            (language, user_id)
-        )
-        
-        conn.commit()
-        conn.close()
-        logger.info(f"User {user_id} language set to: {language}")
-        return True
+        if lang_code not in _LOCALES:
+            logger.warning(f"Invalid language code: {lang_code}")
+            return False
+        from db.repositories.user_repository import UserRepository
+        repo = UserRepository()
+        return repo.set_language(user_id, lang_code)
     except Exception as e:
-        logger.error(f"Error setting language for user {user_id}: {e}")
+        logger.error(f"Error setting user language: {e}")
         return False
 
 
-def get_text(user_id: int, key: str, **kwargs) -> str:
+def get_text(user_id, key, **kwargs):
     """
-    دریافت متن ترجمه شده برای کاربر.
+    Get translated text for a key in user's language.
     
     Args:
-        user_id: شناسه عددی کاربر تلگرام
-        key: کلید ترجمه با dot-notation (مثال: "main_menu.buy_number")
-        **kwargs: پارامترهای جایگزین برای format string
+        user_id: Telegram user ID
+        key: Dot-notation key path (e.g., 'main_menu.buy_number')
+        **kwargs: Format arguments for the text
     
     Returns:
-        متن ترجمه شده
-    
-    Example:
-        get_text(123456, "wallet.title", balance=50000)
-        # → "💰 *کیف پول شما*\n\nموجودی: `50,000 تومان`\n\n💡 حداقل شارژ: 20,000 تومان"
+        Translated and formatted string, or key if not found
     """
-    language = get_user_language(user_id)
-    
-    # navigation through nested dict with dot-notation
-    translation = _translations.get(language, _translations.get(DEFAULT_LANGUAGE, {}))
-    
     try:
+        lang = get_user_language(user_id)
+        data = _LOCALES.get(lang, _LOCALES.get(DEFAULT_LANGUAGE, {}))
         keys = key.split('.')
-        value = translation
+        value = data
         for k in keys:
-            value = value[k]
-    except (KeyError, TypeError):
-        # fallback to Persian
-        try:
-            fallback = _translations.get(DEFAULT_LANGUAGE, {})
-            value = fallback
+            if isinstance(value, dict):
+                value = value.get(k)
+                if value is None:
+                    break
+            else:
+                value = None
+                break
+
+        if value is None:
+            # Fallback to default language
+            data = _LOCALES.get(DEFAULT_LANGUAGE, {})
+            value = data
             for k in keys:
-                value = value[k]
-        except (KeyError, TypeError):
-            logger.warning(f"Translation key not found: '{key}' for lang '{language}'")
-            return f"⚠️ {key}"
-    
-    if not isinstance(value, str):
-        logger.warning(f"Translation key '{key}' is not a string: {type(value)}")
-        return f"⚠️ {key}"
-    
-    # Apply format args if provided
-    if kwargs:
-        try:
-            return value.format(**kwargs)
-        except KeyError as e:
-            logger.warning(f"Missing format key {e} in translation '{key}'")
-            return value
-        except Exception as e:
-            logger.warning(f"Format error in translation '{key}': {e}")
-            return value
-    
-    return value
+                if isinstance(value, dict):
+                    value = value.get(k)
+                    if value is None:
+                        break
+                else:
+                    value = None
+                    break
 
+        if value is None:
+            return f"[{key}]"
 
-def get_all_languages() -> list[dict]:
-    """برمی‌گرداند لیست زبان‌های پشتیبانی شده با جزئیات"""
-    lang_names = {
-        'fa': '🇮🇷 فارسی',
-        'en': '🇬🇧 English',
-        'ar': '🇸🇦 العربية'
-    }
-    return [
-        {'code': code, 'name': lang_names.get(code, code)}
-        for code in SUPPORTED_LANGUAGES
-    ]
+        if kwargs and isinstance(value, str):
+            try:
+                return value.format(**kwargs)
+            except (KeyError, ValueError):
+                return value
 
+        return str(value) if not isinstance(value, str) else value
 
-def is_rtl(user_id: int) -> bool:
-    """آیا زبان کاربر راست‌به‌چپ است؟"""
-    lang = get_user_language(user_id)
-    return lang in ('fa', 'ar')
-
-
-def reload_locales() -> None:
-    """بارگذاری مجدد فایل‌های ترجمه (برای دیباگ)"""
-    _load_locales()
-    logger.info("All locales reloaded")
+    except Exception as e:
+        logger.error(f"Error getting text for key '{key}': {e}")
+        return f"[{key}]"

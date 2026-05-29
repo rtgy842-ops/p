@@ -93,15 +93,13 @@ def handle_buy_number(call):
 
         price_usd = operators_data[operator]['cost']
 
-        # Get USD rate + profit
-        import sqlite3
-        conn = sqlite3.connect('admin.db')
-        cursor = conn.cursor()
-        cursor.execute('SELECT value FROM settings WHERE key = "usd_rate"')
-        usd_rate = float(cursor.fetchone()[0]) if cursor.fetchone() else 0
-        cursor.execute('SELECT value FROM settings WHERE key = "profit_percentage"')
-        profit_pct = float(cursor.fetchone()[0]) if cursor.fetchone() else 0
-        conn.close()
+        # Get USD rate + profit via SettingsRepository
+        from db.repositories.settings_repository import SettingsRepository
+        repo = SettingsRepository()
+        usd_rate_val = repo.get('usd_rate')
+        usd_rate = float(usd_rate_val) if usd_rate_val else 0
+        profit_val = repo.get('profit_percentage')
+        profit_pct = float(profit_val) if profit_val else 0
 
         price_toman = round(price_usd * usd_rate * (1 + profit_pct / 100))
 
