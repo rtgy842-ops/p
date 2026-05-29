@@ -9,14 +9,16 @@ from i18n import get_text
 
 
 def main_menu_keyboard(user_id: int) -> types.InlineKeyboardMarkup:
-    """Build the main inline menu keyboard."""
+    """Build the main inline menu keyboard (Enterprise — NEW design)."""
     keyboard = types.InlineKeyboardMarkup(row_width=2)
 
     keyboard.add(
         types.InlineKeyboardButton(get_text(user_id, 'main_menu.buy_number'), callback_data='buy_number'),
         types.InlineKeyboardButton(get_text(user_id, 'main_menu.balance'), callback_data='check_balance'),
         types.InlineKeyboardButton(get_text(user_id, 'main_menu.my_orders'), callback_data='my_orders'),
-        types.InlineKeyboardButton(get_text(user_id, 'main_menu.help'), callback_data='help')
+        types.InlineKeyboardButton(get_text(user_id, 'main_menu.help'), callback_data='help'),
+        types.InlineKeyboardButton(get_text(user_id, 'main_menu.add_funds'), callback_data='add_funds'),
+        types.InlineKeyboardButton('🌐 ' + get_text(user_id, 'language.select_title'), callback_data='language_menu')
     )
 
     # Admin button (admin_ids check done in handler, not here)
