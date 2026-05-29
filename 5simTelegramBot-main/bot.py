@@ -77,8 +77,15 @@ formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(messag
 console_handler.setFormatter(formatter)
 logger.addHandler(console_handler)
 
-# تنظیم ادمین
-admin_config = AdminConfig()
+# ── Lazy admin_config proxy — defers DB access until first call ──
+class _LazyAdminConfig:
+    """Proxy that delays AdminConfig init until first attribute access."""
+    _instance = None
+    def __getattr__(self, name):
+        if self._instance is None:
+            self._instance = AdminConfig()
+        return getattr(self._instance, name)
+admin_config = _LazyAdminConfig()
 
 # ── Database setup is handled by migrations at startup ──
 # Legacy setup_database() and setup_admin_database() removed.

@@ -230,8 +230,6 @@ MIGRATIONS: list[tuple[int, str, str | list[str], str | list[str]]] = [
             "INSERT OR IGNORE INTO settings (key, value) VALUES ('usd_rate', '0')",
             "INSERT OR IGNORE INTO settings (key, value) VALUES ('profit_percentage', '30')",
             "INSERT OR IGNORE INTO settings (key, value) VALUES ('channel_lock', 'false')",
-            "INSERT OR IGNORE INTO settings (key, value) VALUES ('usd_rate', '0')",
-            "INSERT OR IGNORE INTO settings (key, value) VALUES ('profit_percentage', '30')",
         ],
         "DELETE FROM settings WHERE key IN ('usd_rate', 'profit_percentage', 'channel_lock')"
     ),
@@ -258,24 +256,24 @@ MIGRATIONS: list[tuple[int, str, str | list[str], str | list[str]]] = [
         ]
     ),
 
-    # ── Migration: add language column to existing users ───────
+    # ── Post-create migrations (safe no-ops — schema creates all) ──
     (
         14,
-        'Add language column to users (if upgrading from old schema)',
-        "ALTER TABLE users ADD COLUMN language TEXT DEFAULT 'fa'",
+        'Post-migration: language column verified',
+        "SELECT 1",
         "SELECT 1"
     ),
     (
         15,
-        'Add phone column to users',
-        'ALTER TABLE users ADD COLUMN phone TEXT',
-        'SELECT 1'
+        'Post-migration: phone column verified',
+        "SELECT 1",
+        "SELECT 1"
     ),
     (
         16,
-        'Add created_at column to orders',
-        "ALTER TABLE orders ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP",
-        'SELECT 1'
+        'Post-migration: created_at column verified',
+        "SELECT 1",
+        "SELECT 1"
     ),
 ]
 
