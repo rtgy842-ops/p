@@ -31,7 +31,7 @@ COPY --chown=botuser:botuser . .
 
 # Create writable directories
 RUN mkdir -p /app/logs /app/data/backups && \
-    chown -R botuser:botuser /app/logs /app/data
+    chown -R botuser:botuser /app
 
 # Ensure scripts are executable
 RUN chmod +x docker-entrypoint.sh 2>/dev/null || true
