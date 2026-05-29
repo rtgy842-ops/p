@@ -51,7 +51,7 @@ services:
     networks:
       - internal
     volumes:
-      - bot_data:/app/data
+      - bot_data:/app/data/backups
       - bot_logs:/app/logs
     entrypoint: ["./docker-entrypoint.sh"]
     command: ["python", "bot.py"]
@@ -100,7 +100,7 @@ services:
       redis:
         condition: service_healthy
     volumes:
-      - bot_data:/app/data
+      - bot_data:/app/data/backups
       - bot_logs:/app/logs
 
   # ── Beat: Celery Beat Scheduler ────────────────────────────

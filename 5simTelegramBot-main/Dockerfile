@@ -29,9 +29,9 @@ COPY --from=builder /root/.local /home/botuser/.local
 # Copy application code
 COPY --chown=botuser:botuser . .
 
-# Create writable directories for non-root user
+# Create writable directories + fix ownership for non-root user
 RUN mkdir -p /app/logs /app/data/backups && \
-    chown -R botuser:botuser /app/logs /app/data
+    chown -R botuser:botuser /app
 
 # Ensure scripts are executable
 RUN chmod +x docker-entrypoint.sh 2>/dev/null || true
@@ -42,6 +42,7 @@ USER botuser
 # Add local bin to PATH
 ENV PATH=/home/botuser/.local/bin:$PATH
 ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
 ENV FLASK_APP=bot.py
 
 # Health check
