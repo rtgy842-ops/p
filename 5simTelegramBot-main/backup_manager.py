@@ -201,6 +201,8 @@ class BackupManager:
         try:
             from db.connection import ConnectionManager
             cm = ConnectionManager.get_instance()
+            # Reset connections — SQLite requires same-thread access
+            cm.close_all()
             conn = cm.get_connection('users_db')
             cursor = conn.cursor()
 
@@ -235,6 +237,8 @@ class BackupManager:
         try:
             from db.connection import ConnectionManager
             cm = ConnectionManager.get_instance()
+            # Reset connections — SQLite requires same-thread access
+            cm.close_all()
             conn = cm.get_connection('users_db')
             cursor = conn.cursor()
 
