@@ -27,20 +27,14 @@ from services.order_service import OrderService
 
 logger = logging.getLogger(__name__)
 
-# ── Audit log ──────────────────────────────────────────────────
-_audit_log: list[dict] = []  # In-memory for now; will be DB-backed later
-
 
 def _audit(action: str, admin_id: int, target: str = '', details: str = '') -> None:
-    """Record an audit entry for sensitive admin actions."""
-    entry = {
-        'timestamp': datetime.now().isoformat(),
-        'admin_id': admin_id,
-        'action': action,
-        'target': target,
-        'details': details,
-    }
-    _audit_log.append(entry)
+    """Record an audit entry for sensitive admin actions — DB-persisted."""
+    try:
+        from services.audit_service import audit_service
+        audit_service.log(admin_id, action, target, details)
+    except Exception:
+        pass
     logger.info(f"AUDIT: admin={admin_id} action={action} target={target} {details}")
 
 
@@ -212,5 +206,19 @@ class AdminService:
     # ── Audit ──────────────────────────────────────────────────
 
     def get_audit_log(self, limit: int = 50) -> list[dict]:
-        """Return recent audit entries."""
-        return _audit_log[-limit:]
+        """Return recent audit entries from database."""
+        try:
+            from services.audit_service import audit_service
+            rows = audit_service.get_recent(limit)
+            if rows:
+                return [{'id': r[0] if not isinstance(r, dict) else r.get('id'),
+                         'admin_id': r[1] if not isinstance(r, dict) else r.get('admin_id'),
+                         'action': r[2] if not isinstance(r, dict) else r.get('action'),
+                         'target': r[3] if not isinstance(r, dict) else r.get('target'),
+                         'details': r[4] if not isinstance(r, dict) else r.get('details'),
+                         'ip_address': r[5] if not isinstance(r, dict) else r.get('ip_address'),
+                         'created_at': str(r[6]) if not isinstance(r, dict) else str(r.get('created_at'))}
+                        for r in rows]
+        except Exception:
+            pass
+        return []

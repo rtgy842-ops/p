@@ -1,5 +1,6 @@
-# ── docker-compose.yml — Enterprise Architecture (PostgreSQL) ──
-# Services: nginx → bot → redis + postgres + worker + beat
+# ── docker-compose.yml — Enterprise SaaS Architecture ──
+# Services: nginx → customer_bot / admin_bot → postgres + redis + worker + beat
+# Customer Bot & Admin Bot run as SEPARATE containers with SEPARATE tokens
 # All containers on internal network. Health checks for dependency ordering.
 
 x-common: &common
@@ -14,69 +15,19 @@ services:
     image: postgres:16-alpine
     container_name: smsbot-postgres
     environment:
-      POSTGRES_USER: smsbot
-      POSTGRES_PASSWORD: smsbot_secret
-      POSTGRES_DB: smsbot
+      POSTGRES_USER: ${POSTGRES_USER:-smsbot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-smsbot_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-smsbot}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - internal
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U smsbot -d smsbot"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-smsbot} -d ${POSTGRES_DB:-smsbot}"]
       interval: 10s
       timeout: 5s
       retries: 5
     restart: unless-stopped
-
-  # ── Nginx: Reverse Proxy + SSL ────────────────────────
-  nginx:
-    image: nginx:1.25-alpine
-    container_name: smsbot-nginx
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/conf.d:/etc/nginx/conf.d:ro
-      - ./certs:/etc/nginx/certs:ro
-    depends_on:
-      bot:
-        condition: service_healthy
-    networks:
-      - internal
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://bot:5000/ping"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-      start_period: 25s
-
-  # ── Bot: Telegram Bot + Flask ─────────────────────────
-  bot:
-    <<: *common
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: production
-    container_name: smsbot-bot
-    ports:
-      - "5000:5000"
-    depends_on:
-      redis:
-        condition: service_healthy
-      postgres:
-        condition: service_healthy
-    volumes:
-      - bot_logs:/app/logs
-    entrypoint: ["./docker-entrypoint.sh"]
-    command: ["python", "bot.py"]
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/ping"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
 
   # ── Redis: Cache + Queue ──────────────────────────────
   redis:
@@ -96,6 +47,81 @@ services:
       retries: 3
     restart: unless-stopped
 
+  # ── Nginx: Reverse Proxy ──────────────────────────────
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: smsbot-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+    depends_on:
+      customer_bot:
+        condition: service_healthy
+    networks:
+      - internal
+    restart: unless-stopped
+
+  # ── Customer Bot (NO admin capabilities) ──────────────
+  customer_bot:
+    <<: *common
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: smsbot-customer
+    environment:
+      BOT_TOKEN: ${BOT_TOKEN}
+    ports:
+      - "5001:5000"
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    volumes:
+      - bot_logs:/app/logs
+    entrypoint: ["./docker-entrypoint.sh"]
+    command: ["python", "bot.py"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/ping"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    profiles: ["full", "customer"]
+
+  # ── Admin Bot (separate token, admin handlers only) ────
+  admin_bot:
+    <<: *common
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: smsbot-admin
+    environment:
+      BOT_TOKEN: ${ADMIN_BOT_TOKEN}
+    ports:
+      - "5002:5000"
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    volumes:
+      - bot_logs:/app/logs
+    entrypoint: ["./docker-entrypoint.sh"]
+    command: ["python", "admin_bot.py"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/ping"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    profiles: ["full", "admin"]
+
   # ── Worker: Celery ────────────────────────────────────
   worker:
     <<: *common
@@ -113,6 +139,7 @@ services:
         condition: service_healthy
     volumes:
       - bot_logs:/app/logs
+    profiles: ["full", "worker"]
 
   # ── Beat: Celery Beat Scheduler ───────────────────────
   beat:
@@ -129,6 +156,7 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+    profiles: ["full", "worker"]
 
 volumes:
   postgres_data:

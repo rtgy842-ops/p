@@ -88,17 +88,5 @@ def handle_send_receipt(call):
     _bot.register_next_step_handler(msg, cp.handle_receipt, payment_id)
 
 
-@router.callback('approve_payment_')
-def handle_approve_payment(call):
-    payment_id = call.data.split("_")[2]
-    from card_payment import CardPayment
-    cp = CardPayment(_bot)
-    cp.verify_payment(call, payment_id, "approve")
-
-
-@router.callback('reject_payment_')
-def handle_reject_payment(call):
-    payment_id = call.data.split("_")[2]
-    from card_payment import CardPayment
-    cp = CardPayment(_bot)
-    cp.verify_payment(call, payment_id, "reject")
+# NOTE: approve_payment_ and reject_payment_ callbacks moved to admin_bot.py
+# These are admin-only operations and must NOT be in the customer bot.

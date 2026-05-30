@@ -90,13 +90,28 @@ class SubscriptionService:
     def __init__(self):
         self._default_tier = SubscriptionTier.FREE
 
+    # ── Database-backed Tier Management ─────────────────────────
+
     def get_tier(self, user_id: int) -> SubscriptionTier:
         """
-        Get user's subscription tier.
-        In production, this reads from database.
-        Currently defaults to FREE for all users.
+        Get user's subscription tier from database.
+        Falls back to FREE if no subscription record exists.
         """
-        # TODO: Read from users.subscription_tier column
+        try:
+            from db.context import db_context
+            with db_context('default', transactional=False) as db:
+                row = db.fetchone(
+                    "SELECT tier FROM subscriptions WHERE user_id = %s AND status = 'active'",
+                    (user_id,)
+                )
+                if row:
+                    tier_raw = row[0] if not isinstance(row, dict) else row.get('tier', 'free')
+                    try:
+                        return SubscriptionTier(tier_raw.lower())
+                    except ValueError:
+                        return self._default_tier
+        except Exception as e:
+            logger.warning(f"Failed to read subscription tier for user {user_id}: {e}")
         return self._default_tier
 
     def get_limits(self, user_id: int) -> TierLimits:
@@ -123,15 +138,49 @@ class SubscriptionService:
     def set_tier(self, user_id: int, tier: SubscriptionTier, admin_id: int) -> bool:
         """
         Upgrade/downgrade a user's subscription.
-        Requires admin permission.
+        Persists to database. Requires admin permission.
         """
         from services.rbac_service import rbac, Permission
         if not rbac.has_permission(admin_id, Permission.USERS_EDIT):
+            logger.warning(f"Permission denied: admin {admin_id} cannot edit user {user_id}")
             return False
 
-        # TODO: Save to database
-        logger.info(f"Subscription changed: user={user_id}, tier={tier.value}, by={admin_id}")
-        return True
+        try:
+            from db.context import db_context
+            with db_context('default', transactional=True) as db:
+                db.execute(
+                    """INSERT INTO subscriptions (user_id, tier, status, started_at)
+                       VALUES (%s, %s, 'active', CURRENT_TIMESTAMP)
+                       ON CONFLICT (user_id) DO UPDATE SET
+                       tier = %s, status = 'active', updated_at = CURRENT_TIMESTAMP""",
+                    (user_id, tier.value, tier.value)
+                )
+            logger.info(f"Subscription changed: user={user_id}, tier={tier.value}, by={admin_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to set subscription tier: {e}")
+            return False
+
+    def get_subscription_info(self, user_id: int) -> dict | None:
+        """Get full subscription info from database."""
+        try:
+            from db.context import db_context
+            with db_context('default', transactional=False) as db:
+                row = db.fetchone(
+                    "SELECT tier, status, started_at, expires_at, auto_renew FROM subscriptions WHERE user_id = %s",
+                    (user_id,)
+                )
+                if row:
+                    return {
+                        'tier': row[0] if not isinstance(row, dict) else row.get('tier'),
+                        'status': row[1] if not isinstance(row, dict) else row.get('status'),
+                        'started_at': str(row[2]) if not isinstance(row, dict) else str(row.get('started_at')),
+                        'expires_at': str(row[3]) if not isinstance(row, dict) else str(row.get('expires_at')),
+                        'auto_renew': bool(row[4]) if not isinstance(row, dict) else bool(row.get('auto_renew')),
+                    }
+        except Exception as e:
+            logger.error(f"Failed to get subscription info: {e}")
+        return None
 
     def get_all_tiers(self) -> dict:
         """Return all tier configurations for admin display."""

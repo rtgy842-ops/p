@@ -115,7 +115,7 @@ ROLE_PERMISSIONS: dict[Role, list[Permission]] = {
 
 class RBACService:
     """
-    Centralized permission checking.
+    Centralized permission checking with DB persistence.
     All admin handlers MUST call this before executing sensitive operations.
     """
 
@@ -123,14 +123,34 @@ class RBACService:
         self._role_cache: dict[int, Role] = {}
 
     def get_role(self, user_id: int) -> Role:
-        """Get a user's role. Admin IDs default to SUPER_ADMIN."""
+        """Get a user's role. Checks DB first, then config admin IDs."""
         if user_id in self._role_cache:
             return self._role_cache[user_id]
 
-        if user_id in BOT_CONFIG['admin_ids']:
+        # Check database first
+        try:
+            from db.context import db_context
+            with db_context('default', transactional=False) as db:
+                row = db.fetchone(
+                    "SELECT role FROM admin_roles WHERE user_id = %s",
+                    (user_id,)
+                )
+                if row:
+                    role_raw = row[0] if not isinstance(row, dict) else row.get('role', '')
+                    try:
+                        role = Role(role_raw.lower())
+                        self._role_cache[user_id] = role
+                        return role
+                    except ValueError:
+                        pass
+        except Exception:
+            pass
+
+        # Fallback to config admin IDs → SUPER_ADMIN
+        if user_id in BOT_CONFIG.get('admin_ids', []):
             role = Role.SUPER_ADMIN
         else:
-            role = Role.ANALYST  # Default: read-only
+            role = Role.ANALYST
 
         self._role_cache[user_id] = role
         return role
@@ -139,7 +159,6 @@ class RBACService:
         """Check if a user has a specific permission."""
         role = self.get_role(user_id)
 
-        # SUPER_ADMIN has all permissions
         if role == Role.SUPER_ADMIN:
             return True
 
@@ -157,12 +176,52 @@ class RBACService:
             )
 
     def set_role(self, user_id: int, role: Role, admin_id: int) -> bool:
-        """Assign a role to a user. Only SUPER_ADMIN can do this."""
+        """Assign a role to a user, persisted to DB. Only SUPER_ADMIN can do this."""
+        if not self.has_permission(admin_id, Permission.USERS_EDIT):
+            logger.warning(f"Permission denied: admin {admin_id} cannot assign roles")
+            return False
+
+        try:
+            from db.context import db_context
+            with db_context('default', transactional=True) as db:
+                db.execute(
+                    """INSERT INTO admin_roles (user_id, role, assigned_by)
+                       VALUES (%s, %s, %s)
+                       ON CONFLICT (user_id) DO UPDATE SET
+                       role = %s, assigned_by = %s, updated_at = CURRENT_TIMESTAMP""",
+                    (user_id, role.value, admin_id, role.value, admin_id)
+                )
+            self._role_cache[user_id] = role
+            logger.info(f"Role assigned: user={user_id}, role={role.value}, by={admin_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to set role: {e}")
+            return False
+
+    def delete_role(self, user_id: int, admin_id: int) -> bool:
+        """Remove a user's role assignment from DB."""
         if not self.has_permission(admin_id, Permission.USERS_EDIT):
             return False
-        self._role_cache[user_id] = role
-        logger.info(f"Role assigned: user={user_id}, role={role.value}, by={admin_id}")
-        return True
+        try:
+            from db.context import db_context
+            with db_context('default', transactional=True) as db:
+                db.execute("DELETE FROM admin_roles WHERE user_id = %s", (user_id,))
+            self._role_cache.pop(user_id, None)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to delete role: {e}")
+            return False
+
+    def get_all_admins(self) -> list[dict]:
+        """Get all admin role assignments from database."""
+        try:
+            from db.context import db_context
+            with db_context('default', transactional=False) as db:
+                return db.fetchall(
+                    "SELECT user_id, role, assigned_by, created_at FROM admin_roles ORDER BY created_at DESC"
+                )
+        except Exception:
+            return []
 
     def get_all_roles(self) -> dict[str, list[str]]:
         """Return all roles with their permissions (for admin display)."""

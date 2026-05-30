@@ -60,44 +60,17 @@ class AuditAction(str):
 class AuditService:
     """
     Persistent audit log for all sensitive operations.
-    Records to admin.db for persistence.
+    Records to PostgreSQL main database (schema is in db/schema.py).
     """
 
     def __init__(self):
-        self._ensure_table()
-
-    def _ensure_table(self) -> None:
-        """Create the audit_log table if it doesn't exist."""
-        try:
-            with db_context('admin_db', transactional=True) as db:
-                db.execute('''
-                    CREATE TABLE IF NOT EXISTS audit_log (
-                        id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                        admin_id    INTEGER NOT NULL,
-                        action      TEXT NOT NULL,
-                        target      TEXT DEFAULT '',
-                        details     TEXT DEFAULT '',
-                        ip_address  TEXT DEFAULT '',
-                        created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
-                    )
-                ''')
-                db.execute(
-                    'CREATE INDEX IF NOT EXISTS idx_audit_admin ON audit_log(admin_id)'
-                )
-                db.execute(
-                    'CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_log(action)'
-                )
-                db.execute(
-                    'CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at)'
-                )
-        except Exception as e:
-            logger.error(f"Error creating audit table: {e}")
+        pass  # Schema managed by db/schema.py + migrations
 
     def log(self, admin_id: int, action: str, target: str = '',
             details: dict | str = '', ip_address: str = '') -> bool:
         """
         Record an audit entry.
-        
+
         Args:
             admin_id: The admin who performed the action
             action: One of AuditAction values
@@ -109,11 +82,11 @@ class AuditService:
             details = json.dumps(details, ensure_ascii=False)
 
         try:
-            with db_context('admin_db', transactional=True) as db:
+            with db_context('default', transactional=True) as db:
                 db.execute(
                     '''INSERT INTO audit_log
                        (admin_id, action, target, details, ip_address)
-                       VALUES (?, ?, ?, ?, ?)''',
+                       VALUES (%s, %s, %s, %s, %s)''',
                     (admin_id, action, str(target), str(details)[:2000], ip_address)
                 )
             return True
@@ -125,34 +98,38 @@ class AuditService:
         """Get recent audit entries, optionally filtered by admin."""
         from db.connection import ConnectionManager
         cm = ConnectionManager.get_instance()
-        conn = cm.get_connection('admin_db')
+        conn = cm.get_connection('default')
         cursor = conn.cursor()
 
         if admin_id:
             cursor.execute(
-                'SELECT * FROM audit_log WHERE admin_id = ? '
-                'ORDER BY created_at DESC LIMIT ?',
+                'SELECT * FROM audit_log WHERE admin_id = %s '
+                'ORDER BY created_at DESC LIMIT %s',
                 (admin_id, limit)
             )
         else:
             cursor.execute(
-                'SELECT * FROM audit_log ORDER BY created_at DESC LIMIT ?',
+                'SELECT * FROM audit_log ORDER BY created_at DESC LIMIT %s',
                 (limit,)
             )
-        return cursor.fetchall()
+        result = cursor.fetchall()
+        cm.put_connection(conn)
+        return result
 
     def get_by_action(self, action: str, limit: int = 50):
         """Get audit entries filtered by action type."""
         from db.connection import ConnectionManager
         cm = ConnectionManager.get_instance()
-        conn = cm.get_connection('admin_db')
+        conn = cm.get_connection('default')
         cursor = conn.cursor()
         cursor.execute(
-            'SELECT * FROM audit_log WHERE action = ? '
-            'ORDER BY created_at DESC LIMIT ?',
+            'SELECT * FROM audit_log WHERE action = %s '
+            'ORDER BY created_at DESC LIMIT %s',
             (action, limit)
         )
-        return cursor.fetchall()
+        result = cursor.fetchall()
+        cm.put_connection(conn)
+        return result
 
 
 # ── Global instance ────────────────────────────────────────────

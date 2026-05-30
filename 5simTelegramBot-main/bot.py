@@ -51,16 +51,15 @@ def _get_admin_config():
 # Register ALL handler modules via Router
 # ═══════════════════════════════════════════════════════════════
 from bot.router import router
-from bot.handlers.admin import init as admin_init
-from bot.handlers import menu, payment, membership, purchase
+from bot.handlers import payment, membership, purchase, menu
 
-admin_init(bot)
+# Customer bot handlers ONLY — NO admin handlers
 menu.init(bot)
 payment.init(bot)
 membership.init(bot)
 purchase.init(bot)
 router.register_with_bot(bot)
-logger.info("✅ All handler modules registered via Router")
+logger.info("✅ Customer bot handlers registered via Router")
 
 # ═══════════════════════════════════════════════════════════════
 # Core Inline Handlers (not in bot/handlers/)

@@ -43,6 +43,10 @@ def create_app(bot_instance=None, debug=False):
     from web.routes.admin_api import admin_api_bp
     app.register_blueprint(admin_api_bp)
 
+    # Enterprise Admin Panel
+    from web.routes.admin_panel import admin_panel_bp
+    app.register_blueprint(admin_panel_bp)
+
     # Legacy order details blueprint
     from routes.order_details import order_details_bp
     app.register_blueprint(order_details_bp)
