@@ -59,12 +59,8 @@ if __name__ == '__main__':
     from services.provider_registry import provider_registry; from services.sms_service import HeroSMSProvider
     provider_registry.register(HeroSMSProvider(), 'HeroSMS', priority=1); provider_registry.load_from_db()
 
-    # Delete webhook, start POLLING
-    try: bot.remove_webhook(); time.sleep(1)
-    except: pass
-
-    threading.Thread(target=lambda: bot.polling(none_stop=True, timeout=30), daemon=True).start()
-    logger.info("Customer Bot LIVE (polling)")
+    # Webhook is set EXTERNALLY — just run Flask to receive updates
+    logger.info("Customer Bot LIVE (webhook mode — no polling)")
 
     port = int(os.getenv('FLASK_PORT', '5000'))
     app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
