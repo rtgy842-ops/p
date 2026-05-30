@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-admin_bot.py — Standalone Admin Bot (Docker-Optimized)
+admin_bot.py — Standalone Admin Bot (Webhook Mode)
 ─────────────────────────────────────────────────
-COMPLETELY SEPARATE from Customer Bot (bot.py).
-Uses ADMIN_BOT_TOKEN from docker-compose environment.
+Uses WEBHOOK set EXTERNALLY (via curl).
+DO NOT call remove_webhook() or set_webhook() from here.
 """
 
 import logging
@@ -41,64 +41,40 @@ app.register_blueprint(admin_panel_bp)
 logger.info("✅ Admin panel registered")
 
 
-@app.route('/', methods=['GET', 'POST'])
+@app.route('/', methods=['POST'])
 def admin_webhook():
-    if request.method == 'POST':
-        try:
-            json_str = request.get_data().decode('UTF-8')
-            update = telebot.types.Update.de_json(json_str)
-            bot.process_new_updates([update])
-            return ''
-        except Exception as e:
-            logger.error(f"Admin webhook error: {e}")
-            return 'error', 500
-    return 'Admin Bot is running'
+    try:
+        json_str = request.get_data().decode('UTF-8')
+        update = telebot.types.Update.de_json(json_str)
+        bot.process_new_updates([update])
+        return ''
+    except Exception as e:
+        logger.error(f"Webhook error: {e}")
+        return 'error', 500
 
 
 @app.route('/admin/start')
 def admin_panel_link():
     token = os.getenv('ADMIN_API_TOKEN', '')
     if not token:
-        return 'Admin panel not configured (set ADMIN_API_TOKEN)', 500
+        return 'Admin panel not configured', 500
     web_url = os.getenv('WEBSITE_URL', os.getenv('WEBHOOK_URL', ''))
     return f'<a href="{web_url}/admin?token={token}">🔗 Open Admin Panel</a>'
 
 
-# ═══════════════════════════════════════════════════════════════
-# STARTUP — Resilient
-# ═══════════════════════════════════════════════════════════════
 if __name__ == '__main__':
     try:
-        from database import setup_databases
-        setup_databases()
+        from database import setup_databases; setup_databases()
         logging.info("✅ DB initialized")
-
-        from db.migrations import MigrationManager
-        MigrationManager().migrate()
+        from db.migrations import MigrationManager; MigrationManager().migrate()
         logging.info("✅ Migrations done")
-
         from services.provider_registry import provider_registry
         from services.sms_service import HeroSMSProvider
         provider_registry.register(HeroSMSProvider(), 'HeroSMS', priority=1)
         provider_registry.load_from_db()
         logging.info("✅ Provider ready")
-
-        # Try webhook, fall back to polling
-        try:
-            bot.remove_webhook()
-            time.sleep(1)
-            webhook_url = os.getenv('ADMIN_WEBHOOK_URL', os.getenv('WEBHOOK_URL', ''))
-            if webhook_url:
-                bot.set_webhook(url=webhook_url + '/')
-                logging.info(f"✅ Admin webhook: {webhook_url}")
-        except Exception:
-            logging.warning("⚠️ Admin webhook failed — using polling mode")
-            import threading
-            threading.Thread(target=bot.polling, kwargs={'none_stop': True}, daemon=True).start()
-
-        app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
-
     except Exception as e:
-        logging.critical(f"❌ Fatal: {e}", exc_info=True)
-        while True:
-            time.sleep(60)
+        logging.critical(f"❌ Init error: {e}", exc_info=True)
+
+    logging.info("🌐 Admin Flask starting on port 5000 — ready for webhook updates")
+    app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
