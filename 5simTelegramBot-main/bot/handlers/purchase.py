@@ -153,23 +153,38 @@ def handle_help(call):
     _bot.edit_message_text(get_text(user_id, 'help.title'),
                            call.message.chat.id, call.message.message_id, reply_markup=keyboard)
 
-# ── help sub-menu callbacks ───────────────────────────────
-for _cb in ['help_buy_number', 'help_charge', 'help_get_code', 'help_payment', 'help_delivery', 'help_cancel']:
-    _answer_map = {
-        'help_buy_number': 'help.buy_number_answer', 'help_charge': 'help.charge_answer',
-        'help_get_code': 'help.get_code_answer', 'help_payment': 'help.payment_methods_answer',
-        'help_delivery': 'help.delivery_time_answer', 'help_cancel': 'help.cancel_order_answer',
-    }
-    def _make_help_handler(cb):
-        @router.callback(cb)
-        def _handler(call, key=_answer_map[cb]):
-            from telebot import types
-            uid = call.from_user.id
-            kb = types.InlineKeyboardMarkup()
-            kb.add(types.InlineKeyboardButton(get_text(uid, 'navigation.back_to_help'), callback_data="help"))
-            _bot.edit_message_text(get_text(uid, key), call.message.chat.id, call.message.message_id, reply_markup=kb)
-        return _handler
-    _make_help_handler(_cb)
+# ── help sub-menu callbacks (one per key — no closure bug) ──
+_ANSWER_MAP = {
+    'help_buy_number': 'help.buy_number_answer', 'help_charge': 'help.charge_answer',
+    'help_get_code': 'help.get_code_answer', 'help_payment': 'help.payment_methods_answer',
+    'help_delivery': 'help.delivery_time_answer', 'help_cancel': 'help.cancel_order_answer',
+}
+
+@router.callback('help_buy_number')
+def help_buy_number_cb(call):
+    _show_help_answer(call, 'help_buy_number')
+@router.callback('help_charge')
+def help_charge_cb(call):
+    _show_help_answer(call, 'help_charge')
+@router.callback('help_get_code')
+def help_get_code_cb(call):
+    _show_help_answer(call, 'help_get_code')
+@router.callback('help_payment')
+def help_payment_cb(call):
+    _show_help_answer(call, 'help_payment')
+@router.callback('help_delivery')
+def help_delivery_cb(call):
+    _show_help_answer(call, 'help_delivery')
+@router.callback('help_cancel')
+def help_cancel_cb(call):
+    _show_help_answer(call, 'help_cancel')
+
+def _show_help_answer(call, data_key):
+    from telebot import types
+    uid = call.from_user.id
+    kb = types.InlineKeyboardMarkup()
+    kb.add(types.InlineKeyboardButton(get_text(uid, 'navigation.back_to_help'), callback_data="help"))
+    _bot.edit_message_text(get_text(uid, _ANSWER_MAP[data_key]), call.message.chat.id, call.message.message_id, reply_markup=kb)
 
 
 # ── Navigation + Operator ─────────────────────────────────
