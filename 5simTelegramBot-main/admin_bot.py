@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-admin_bot.py — Admin Bot (POLLING, reads FLASK_PORT)
+admin_bot.py — Admin Bot (WEBHOOK mode — receives updates via POST /)
 """
 import logging, time, os, sys, threading
 from flask import Flask, request
@@ -20,6 +20,12 @@ logger.info(f"Admin handlers: {len(router._callback_handlers)} cb + {len(router.
 
 from web.health import health_bp; app.register_blueprint(health_bp)
 from web.routes.admin_panel import admin_panel_bp; app.register_blueprint(admin_panel_bp)
+
+# ── WEBHOOK: Register the blueprint that handles POST / from Telegram ──
+from web.routes.webhook import webhook_bp, init as webhook_init
+webhook_init(bot)
+app.register_blueprint(webhook_bp)
+logger.info("Webhook blueprint registered — POST / ready for Telegram admin updates")
 
 @app.route('/')
 def root(): return 'Admin Bot is running'

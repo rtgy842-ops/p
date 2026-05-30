@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-bot.py — Customer Bot (POLLING — no SSL needed)
+bot.py — Customer Bot (WEBHOOK mode — receives updates via POST /)
 """
 import logging, time, os, sys, json, threading
 from flask import Flask, request, render_template
@@ -16,6 +16,12 @@ bot = telebot.TeleBot(BOT_CONFIG['token'])
 app = Flask(__name__, static_folder='static', template_folder='templates')
 app.register_blueprint(order_details_bp); app.register_blueprint(health_bp)
 logging.basicConfig(stream=sys.stdout, format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
+
+# ── WEBHOOK: Register the blueprint that handles POST / from Telegram ──
+from web.routes.webhook import webhook_bp, init as webhook_init
+webhook_init(bot)
+app.register_blueprint(webhook_bp)
+logger.info("Webhook blueprint registered — POST / ready for Telegram updates")
 
 from bot.router import router
 from bot.handlers import menu, payment, membership, purchase

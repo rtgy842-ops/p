@@ -17,7 +17,7 @@ services:
     container_name: smsbot-postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-smsbot}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-smsbot_secret}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-MyS3cur3Pssw0r}
       POSTGRES_DB: ${POSTGRES_DB:-smsbot}
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -81,6 +81,7 @@ services:
       dockerfile: Dockerfile
       target: production
     container_name: smsbot-admin
+    command: ["python", "admin_bot.py"]
     environment:
       BOT_TOKEN: ${ADMIN_BOT_TOKEN}
     ports:
