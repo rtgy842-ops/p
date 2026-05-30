@@ -1,7 +1,11 @@
 # ═══════════════════════════════════════════════════════════════
-# bot.py — Enterprise Customer Bot (Polling, infinity_polling)
+# bot.py — Enterprise Customer Bot (WEBHOOK MODE — no polling)
 # ═══════════════════════════════════════════════════════════════
-import logging, time, os, sys, json, threading
+# Webhook is set EXTERNALLY via curl. Flask receives POST at /.
+# DO NOT call remove_webhook() or polling — that causes 409.
+# ═══════════════════════════════════════════════════════════════
+
+import logging, time, os, sys, json
 from flask import Flask, request, render_template
 import telebot
 from telebot import types
@@ -43,6 +47,16 @@ def back_main_cb(c):
     from bot.keyboards.main_keyboard import main_menu_keyboard
     bot.edit_message_text(get_text(c.from_user.id,'welcome_back'), c.message.chat.id, c.message.message_id, reply_markup=main_menu_keyboard(c.from_user.id))
 
+@app.route('/', methods=['POST'])
+def telegram_webhook():
+    try:
+        update = telebot.types.Update.de_json(request.get_data().decode('UTF-8'))
+        bot.process_new_updates([update])
+        return ''
+    except Exception as e:
+        logger.error(f"Webhook: {e}")
+        return 'error', 500
+
 @app.route('/verify/<user_id>/<amount>')
 def verify_payment(user_id, amount):
     try:
@@ -59,19 +73,12 @@ def verify_payment(user_id, amount):
 if __name__ == '__main__':
     try:
         validate_secrets()
-        from database import setup_databases; setup_databases()
-        logging.info("✅ DB")
-        from db.migrations import MigrationManager; MigrationManager().migrate()
-        logging.info("✅ Migrations")
-        from services.provider_registry import provider_registry
-        from services.sms_service import HeroSMSProvider
-        provider_registry.register(HeroSMSProvider(), 'HeroSMS', priority=1)
-        provider_registry.load_from_db()
+        from database import setup_databases; setup_databases(); logging.info("✅ DB")
+        from db.migrations import MigrationManager; MigrationManager().migrate(); logging.info("✅ Migrations")
+        from services.provider_registry import provider_registry; from services.sms_service import HeroSMSProvider
+        provider_registry.register(HeroSMSProvider(), 'HeroSMS', priority=1); provider_registry.load_from_db()
         logging.info("✅ Provider")
     except Exception as e: logging.critical(f"❌ Init: {e}", exc_info=True)
 
-    # Don't touch webhook here — it's already deleted via curl
-    # infinity_polling handles 409 internally with proper backoff
-    threading.Thread(target=lambda: bot.infinity_polling(timeout=30, long_polling_timeout=20), daemon=True).start()
-    logging.info("🚀 Customer Bot LIVE — infinity_polling")
+    logging.info("🌐 Webhook mode — ready to receive updates")
     app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
