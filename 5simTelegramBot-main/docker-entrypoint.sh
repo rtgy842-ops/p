@@ -1,54 +1,43 @@
 #!/bin/sh
-# ── docker-entrypoint.sh — PostgreSQL Startup ─────────────
+# ── docker-entrypoint.sh — Wait for dependencies, then exec ──
 set -e
-echo "=== SMS Bot Platform Entrypoint (PostgreSQL) ==="
-echo "Mode: ${APP_ENV:-production}"
+echo "=== NumGenius Entrypoint ==="
 
-# Wait for PostgreSQL to be ready
+# Wait for PostgreSQL
 echo "Waiting for PostgreSQL..."
 for i in $(seq 1 30); do
   if python -c "
 import psycopg2
 try:
-    conn = psycopg2.connect('${DATABASE_URL:-postgresql://smsbot:smsbot_secret@postgres:5432/smsbot}')
+    conn = psycopg2.connect('${DATABASE_URL:-postgresql://smsbot:MyS3cur3Pssw0r@postgres:5432/smsbot}')
     conn.close()
     print('OK')
 except: pass
 " 2>/dev/null; then
-    echo "PostgreSQL is ready!"
+    echo "PostgreSQL ready!"
     break
   fi
-  echo "  Waiting... ($i/30)"
+  [ $i -eq 30 ] && echo "WARNING: PostgreSQL not ready after 30 attempts"
   sleep 2
 done
 
-# Run migrations
-echo "Running database migrations..."
-python -c "
-from db.connection import ConnectionManager
-from db.schema import ALL_TABLES, DEFAULT_SETTINGS, INDEXES
-from db.migrations import MigrationManager
+# Wait for Redis
+echo "Waiting for Redis..."
+for i in $(seq 1 15); do
+  if python -c "
+import redis
+try:
+    r = redis.from_url('${CELERY_BROKER_URL:-redis://redis:6379/0}')
+    r.ping()
+    print('OK')
+except: pass
+" 2>/dev/null; then
+    echo "Redis ready!"
+    break
+  fi
+  sleep 2
+done
 
-cm = ConnectionManager.get_instance()
-conn = cm.get_connection('default')
-cursor = conn.cursor()
-
-for table_name, ddl in ALL_TABLES.items():
-    try:
-        cursor.execute(ddl)
-        print(f'Table ensured: {table_name}')
-    except Exception as e:
-        print(f'Table {table_name}: {e}')
-conn.commit()
-cm.put_connection(conn)
-
-mm = MigrationManager()
-if mm.migrate():
-    print('Migration complete')
-else:
-    print('WARNING: Migration had issues')
-"
-
-# Start the main process
-echo "Starting application: $@"
+# The application handles migrations itself
+echo "Starting: $@"
 exec "$@"
