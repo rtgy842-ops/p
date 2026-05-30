@@ -1,10 +1,6 @@
 # ═══════════════════════════════════════════════════════════════
-# bot.py — Enterprise Customer Bot (Polling Mode)
+# bot.py — Enterprise Customer Bot (Polling Mode, 409-Safe)
 # ═══════════════════════════════════════════════════════════════
-# Uses POLLING for Telegram (no webhook/SSL/nginx needed).
-# Flask serves /ping for Docker health checks only.
-# ═══════════════════════════════════════════════════════════════
-
 import logging, time, os, sys, json, threading
 from flask import Flask, request, render_template
 import telebot
@@ -15,18 +11,16 @@ from routes.order_details import order_details_bp
 from web.health import health_bp
 
 logger = logging.getLogger(__name__)
-
 bot = telebot.TeleBot(BOT_CONFIG['token'])
 app = Flask(__name__, static_folder='static', template_folder='templates')
 app.register_blueprint(order_details_bp); app.register_blueprint(health_bp)
 logging.basicConfig(stream=sys.stdout, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# Register ALL handlers via Router
 from bot.router import router
 from bot.handlers import menu, payment, membership, purchase
 menu.init(bot); payment.init(bot); membership.init(bot); purchase.init(bot)
 router.register_with_bot(bot)
-logger.info(f"✅ {len(router._callback_handlers)} callback + {len(router._message_handlers)} cmd handlers registered")
+logger.info(f"✅ {len(router._callback_handlers)} callback + {len(router._message_handlers)} cmd handlers")
 
 
 @bot.message_handler(commands=['start'])
@@ -41,11 +35,10 @@ def start_handler(message):
 
 @bot.message_handler(commands=['language'])
 def language_handler(message):
-    user_id = message.from_user.id
-    kb = types.InlineKeyboardMarkup(row_width=1)
+    uid=message.from_user.id; kb=types.InlineKeyboardMarkup(row_width=1)
     for lang in get_all_languages(): kb.add(types.InlineKeyboardButton(lang['name'], callback_data=f"setlang_{lang['code']}"))
-    kb.add(types.InlineKeyboardButton(get_text(user_id, 'navigation.back_to_main'), callback_data="back_to_main"))
-    bot.send_message(message.chat.id, get_text(user_id, 'language.select_title'), reply_markup=kb)
+    kb.add(types.InlineKeyboardButton(get_text(uid,'navigation.back_to_main'), callback_data="back_to_main"))
+    bot.send_message(message.chat.id, get_text(uid,'language.select_title'), reply_markup=kb)
 
 @bot.callback_query_handler(func=lambda c: c.data == 'language_menu')
 def lang_menu_cb(c):
@@ -83,8 +76,36 @@ def verify_payment(user_id, amount):
         return render_template('payment_result.html', success=False, message="Verification failed")
     except Exception as e: logger.error(f"Verify: {e}"); return render_template('payment_result.html', success=False, message="Error")
 
-# ═══════════════════════════════════════════════════════════════
-# STARTUP
+
+def start_polling():
+    """Start polling with retry on 409 conflict."""
+    # Force-delete webhook and wait for propagation
+    for _ in range(5):
+        try:
+            bot.remove_webhook()
+            time.sleep(2)
+            break
+        except Exception:
+            time.sleep(2)
+
+    logger.info("Starting polling loop...")
+    while True:
+        try:
+            bot.polling(none_stop=False, timeout=30, long_polling_timeout=20)
+        except Exception as e:
+            msg = str(e)
+            if '409' in msg or 'Conflict' in msg:
+                logger.warning(f"409 conflict — waiting 5s then retrying...")
+                time.sleep(5)
+                # Force delete webhook again
+                try: bot.remove_webhook()
+                except: pass
+                time.sleep(3)
+                continue
+            logger.error(f"Polling error: {e}")
+            time.sleep(5)
+
+
 # ═══════════════════════════════════════════════════════════════
 if __name__ == '__main__':
     try:
@@ -95,10 +116,6 @@ if __name__ == '__main__':
         logging.info("✅ Provider")
     except Exception as e: logging.critical(f"❌ Init: {e}", exc_info=True)
 
-    # Remove any existing webhook, start POLLING
-    try: bot.remove_webhook(); time.sleep(1); logging.info("✅ Webhook removed — polling mode")
-    except: pass
-
-    threading.Thread(target=lambda: bot.polling(none_stop=True, timeout=30), daemon=True).start()
-    logging.info("🚀 Telegram polling started — bot is LIVE")
+    threading.Thread(target=start_polling, daemon=True).start()
+    logging.info("🚀 Customer Bot LIVE — polling mode")
     app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)

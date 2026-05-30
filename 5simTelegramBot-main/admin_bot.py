@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
 """
-admin_bot.py — Standalone Admin Bot (Polling Mode)
+admin_bot.py — Standalone Admin Bot (Polling, 409-Safe)
 ─────────────────────────────────────────────────
-Uses POLLING (no webhook/SSL/nginx needed).
-Flask serves /ping for Docker health checks.
 """
-
 import logging, sys, os, time, threading
 import telebot
-from flask import Flask, request
+from flask import Flask
 
 logging.basicConfig(stream=sys.stdout, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -20,7 +17,7 @@ app = Flask(__name__)
 from bot.router import router
 from bot.handlers.admin_bot import init as admin_bot_init
 admin_bot_init(bot); router.register_with_bot(bot)
-logger.info(f"✅ Admin handlers: {len(router._callback_handlers)} callback + {len(router._message_handlers)} cmd")
+logger.info(f"✅ Admin: {len(router._callback_handlers)} cb + {len(router._message_handlers)} cmd")
 
 from web.health import health_bp; app.register_blueprint(health_bp)
 from web.routes.admin_panel import admin_panel_bp; app.register_blueprint(admin_panel_bp)
@@ -28,11 +25,25 @@ from web.routes.admin_panel import admin_panel_bp; app.register_blueprint(admin_
 @app.route('/')
 def root(): return 'Admin Bot is running'
 @app.route('/admin/start')
-def admin_panel_link():
-    token = os.getenv('ADMIN_API_TOKEN', '')
-    if not token: return 'Admin panel not configured', 500
-    web_url = os.getenv('WEBSITE_URL', os.getenv('WEBHOOK_URL', ''))
-    return f'<a href="{web_url}/admin?token={token}">🔗 Open Admin Panel</a>'
+def link():
+    t=os.getenv('ADMIN_API_TOKEN',''); w=os.getenv('WEBSITE_URL',os.getenv('WEBHOOK_URL',''))
+    return f'<a href="{w}/admin?token={t}">🔗 Admin Panel</a>' if t else 'Not configured', 200 if t else 500
+
+def start_polling():
+    for _ in range(5):
+        try: bot.remove_webhook(); time.sleep(2); break
+        except: time.sleep(2)
+    logger.info("Admin polling loop starting...")
+    while True:
+        try:
+            bot.polling(none_stop=False, timeout=30, long_polling_timeout=20)
+        except Exception as e:
+            if '409' in str(e) or 'Conflict' in str(e):
+                logger.warning("409 — retrying..."); time.sleep(5)
+                try: bot.remove_webhook()
+                except: pass
+                time.sleep(3); continue
+            logger.error(f"Polling error: {e}"); time.sleep(5)
 
 if __name__ == '__main__':
     try:
@@ -43,9 +54,6 @@ if __name__ == '__main__':
         logging.info("✅ Provider")
     except Exception as e: logging.critical(f"❌ Init: {e}", exc_info=True)
 
-    try: bot.remove_webhook(); time.sleep(1); logging.info("✅ Webhook removed — polling mode")
-    except: pass
-
-    threading.Thread(target=lambda: bot.polling(none_stop=True, timeout=30), daemon=True).start()
-    logging.info("🚀 Admin polling started — bot is LIVE")
+    threading.Thread(target=start_polling, daemon=True).start()
+    logging.info("🚀 Admin Bot LIVE — polling mode")
     app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
