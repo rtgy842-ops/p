@@ -1,6 +1,7 @@
 # ── docker-compose.yml — Enterprise SaaS Architecture ──
-# Services: nginx → customer_bot / admin_bot → postgres + redis + worker + beat
+# Services: customer_bot / admin_bot → postgres + redis + worker + beat
 # Customer Bot & Admin Bot run as SEPARATE containers with SEPARATE tokens
+# Nginx is managed on the HOST (not in Docker) for simplicity
 # All containers on internal network. Health checks for dependency ordering.
 
 x-common: &common
@@ -47,23 +48,6 @@ services:
       retries: 3
     restart: unless-stopped
 
-  # ── Nginx: Reverse Proxy ──────────────────────────────
-  nginx:
-    image: nginx:1.25-alpine
-    container_name: smsbot-nginx
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./certs:/etc/nginx/certs:ro
-    depends_on:
-      customer_bot:
-        condition: service_healthy
-    networks:
-      - internal
-    restart: unless-stopped
-
   # ── Customer Bot (NO admin capabilities) ──────────────
   customer_bot:
     <<: *common
@@ -81,16 +65,12 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
-    volumes:
-      - bot_logs:/app/logs
-    entrypoint: ["./docker-entrypoint.sh"]
-    command: ["python", "bot.py"]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/ping"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:5000/ping || exit 1"]
       interval: 15s
       timeout: 5s
-      retries: 3
-      start_period: 30s
+      retries: 10
+      start_period: 90s
     profiles: ["full", "customer"]
 
   # ── Admin Bot (separate token, admin handlers only) ────
@@ -110,16 +90,12 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
-    volumes:
-      - bot_logs:/app/logs
-    entrypoint: ["./docker-entrypoint.sh"]
-    command: ["python", "admin_bot.py"]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/ping"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:5000/ping || exit 1"]
       interval: 15s
       timeout: 5s
-      retries: 3
-      start_period: 30s
+      retries: 10
+      start_period: 90s
     profiles: ["full", "admin"]
 
   # ── Worker: Celery ────────────────────────────────────
@@ -137,8 +113,6 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
-    volumes:
-      - bot_logs:/app/logs
     profiles: ["full", "worker"]
 
   # ── Beat: Celery Beat Scheduler ───────────────────────
@@ -160,8 +134,6 @@ services:
 
 volumes:
   postgres_data:
-    driver: local
-  bot_logs:
     driver: local
   redis_data:
     driver: local
