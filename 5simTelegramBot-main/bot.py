@@ -1,9 +1,8 @@
 # ═══════════════════════════════════════════════════════════════
-# bot.py — Enterprise Telegram Bot (Post-Migration)
+# bot.py — Enterprise Customer Bot (Post-Migration)
 # ═══════════════════════════════════════════════════════════════
-# Handlers are now in bot/handlers/ (registered via Router).
-# Balance ops use WalletService; SMS ops use SMSService.
-# No direct sqlite3.connect() anywhere.
+# Customer Bot ONLY — NO admin capabilities.
+# Admin handlers are in admin_bot.py (separate token).
 # ═══════════════════════════════════════════════════════════════
 
 import logging
@@ -16,7 +15,7 @@ from flask import Flask, request, render_template
 import telebot
 from telebot import types
 
-from config import BOT_CONFIG, HEROSMS_CONFIG, DB_CONFIG, PAYMENT_CONFIG, COUNTRY_ID_MAP, SERVICE_CODE_MAP
+from config import BOT_CONFIG, HEROSMS_CONFIG, DB_CONFIG, PAYMENT_CONFIG, COUNTRY_ID_MAP, SERVICE_CODE_MAP, validate_secrets
 from i18n import get_text, get_user_language, set_user_language, get_all_languages
 from routes.order_details import order_details_bp
 from web.health import health_bp
@@ -48,12 +47,12 @@ def _get_admin_config():
     return _admin_config
 
 # ═══════════════════════════════════════════════════════════════
-# Register ALL handler modules via Router
+# Register CUSTOMER-ONLY handler modules via Router
+# NO admin handlers — those are in admin_bot.py
 # ═══════════════════════════════════════════════════════════════
 from bot.router import router
-from bot.handlers import payment, membership, purchase, menu
+from bot.handlers import menu, payment, membership, purchase
 
-# Customer bot handlers ONLY — NO admin handlers
 menu.init(bot)
 payment.init(bot)
 membership.init(bot)
@@ -62,7 +61,7 @@ router.register_with_bot(bot)
 logger.info("✅ Customer bot handlers registered via Router")
 
 # ═══════════════════════════════════════════════════════════════
-# Core Inline Handlers (not in bot/handlers/)
+# Core Inline Handlers
 # ═══════════════════════════════════════════════════════════════
 
 # ── /start ─────────────────────────────────────────────────
@@ -165,10 +164,14 @@ def save_user(user):
     return UserRepository().create_if_not_exists(user.id)
 
 # ═══════════════════════════════════════════════════════════════
-# Startup
+# Startup — Customer Bot
 # ═══════════════════════════════════════════════════════════════
 if __name__ == '__main__':
     try:
+        # Validate all required secrets
+        validate_secrets()
+        logging.info("✅ All required secrets validated")
+
         from database import setup_databases
         setup_databases()
         logging.info("✅ Databases initialized")
@@ -177,6 +180,13 @@ if __name__ == '__main__':
         mm = MigrationManager()
         if mm.migrate():
             logging.info("✅ Migrations applied")
+
+        # Register provider in registry
+        from services.provider_registry import provider_registry
+        from services.sms_service import HeroSMSProvider
+        provider_registry.register(HeroSMSProvider(), 'HeroSMS', priority=1)
+        provider_registry.load_from_db()
+        logging.info("✅ Provider registry initialized")
 
         backup_file = 'data/users_backup.json'
         if os.path.exists(backup_file):
@@ -196,7 +206,7 @@ if __name__ == '__main__':
         bot.remove_webhook()
         time.sleep(0.5)
         bot.set_webhook(url=BOT_CONFIG['webhook_url'])
-        logging.info(f"✅ Webhook set to {BOT_CONFIG['webhook_url']}")
+        logging.info(f"✅ Customer webhook set to {BOT_CONFIG['webhook_url']}")
 
         app.run(host='0.0.0.0', port=5000, debug=False)
 

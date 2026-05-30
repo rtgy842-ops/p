@@ -3,27 +3,20 @@
 admin_bot.py — Standalone Admin Bot (Enterprise Entry Point)
 ─────────────────────────────────────────────────
 COMPLETELY SEPARATE from Customer Bot (bot.py).
-Requires ADMIN_BOT_TOKEN env var.
+Uses its OWN env var (BOT_TOKEN overridden by docker-compose).
 ZERO customer capabilities — admin operations only.
 """
 
 import logging
 import sys
 import os
+import time
 
-# Verify admin token is present
-if not os.getenv('ADMIN_BOT_TOKEN'):
-    print("❌ ADMIN_BOT_TOKEN not set. Admin Bot will NOT start.", file=sys.stderr)
-    print("Set ADMIN_BOT_TOKEN in your .env file.", file=sys.stderr)
-    sys.exit(0)
+# Lazy import — token set by docker-compose environment
+_ADMIN_TOKEN = os.getenv('BOT_TOKEN', os.getenv('ADMIN_BOT_TOKEN', ''))
 
 import telebot
 from flask import Flask, request
-
-from config import BOT_CONFIG
-
-# Override token with admin-specific token
-_ADMIN_TOKEN = os.getenv('ADMIN_BOT_TOKEN')
 
 logging.basicConfig(
     stream=sys.stdout,
@@ -48,6 +41,11 @@ logger.info("✅ Admin Bot handlers registered")
 from web.health import health_bp
 app.register_blueprint(health_bp)
 
+from web.routes.admin_panel import admin_panel_bp
+app.register_blueprint(admin_panel_bp)
+logger.info("✅ Admin panel blueprint registered")
+
+
 @app.route('/', methods=['GET', 'POST'])
 def admin_webhook():
     if request.method == 'POST':
@@ -68,7 +66,8 @@ def admin_panel_link():
     token = os.getenv('ADMIN_API_TOKEN', '')
     if not token:
         return 'Admin panel not configured (set ADMIN_API_TOKEN)', 500
-    return f'<a href="/admin?token={token}">Open Admin Panel</a>'
+    web_url = os.getenv('WEBSITE_URL', os.getenv('WEBHOOK_URL', ''))
+    return f'<a href="{web_url}/admin?token={token}">🔗 Open Admin Panel</a>'
 
 
 if __name__ == '__main__':
@@ -82,7 +81,6 @@ if __name__ == '__main__':
         if mm.migrate():
             logging.info("✅ Migrations applied")
 
-        # Register provider in registry
         from services.provider_registry import provider_registry
         from services.sms_service import HeroSMSProvider
         provider_registry.register(HeroSMSProvider(), 'HeroSMS', priority=1)
@@ -90,14 +88,14 @@ if __name__ == '__main__':
         logging.info("✅ Provider registry initialized")
 
         bot.remove_webhook()
-        import time
         time.sleep(0.5)
         webhook_url = os.getenv('ADMIN_WEBHOOK_URL', os.getenv('WEBHOOK_URL', ''))
         if webhook_url:
             bot.set_webhook(url=webhook_url + '/')
             logging.info(f"✅ Admin webhook set to {webhook_url}")
 
-        app.run(host='0.0.0.0', port=5000, debug=False)
+        port = int(os.getenv('FLASK_PORT', '5000'))
+        app.run(host='0.0.0.0', port=port, debug=False)
 
     except Exception as e:
         logging.error(f"❌ Fatal admin startup error: {e}", exc_info=True)
