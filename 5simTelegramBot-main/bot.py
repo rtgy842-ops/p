@@ -203,12 +203,37 @@ if __name__ == '__main__':
         BackupManager(backup_interval=300).start()
         logging.info("✅ Backup service started")
 
-        bot.remove_webhook()
-        time.sleep(0.5)
-        bot.set_webhook(url=BOT_CONFIG['webhook_url'])
-        logging.info(f"✅ Customer webhook set to {BOT_CONFIG['webhook_url']}")
+        # Set webhook — non-fatal, retry if it fails
+        try:
+            bot.remove_webhook()
+            time.sleep(0.5)
+            bot.set_webhook(url=BOT_CONFIG['webhook_url'])
+            logging.info(f"✅ Customer webhook set to {BOT_CONFIG['webhook_url']}")
+        except Exception as we:
+            logging.warning(f"⚠️ Webhook setup failed (will retry): {we}")
 
-        app.run(host='0.0.0.0', port=5000, debug=False)
+        # Start Flask in a thread so health checks pass immediately
+        import threading
+        flask_thread = threading.Thread(
+            target=lambda: app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False),
+            daemon=True
+        )
+        flask_thread.start()
+        logging.info("✅ Flask started on port 5000")
+
+        # Retry webhook after Flask is up
+        time.sleep(3)
+        try:
+            bot.remove_webhook()
+            time.sleep(0.5)
+            bot.set_webhook(url=BOT_CONFIG['webhook_url'])
+            logging.info(f"✅ Customer webhook set to {BOT_CONFIG['webhook_url']}")
+        except Exception:
+            logging.warning("⚠️ Webhook retry also failed — set manually later")
+
+        # Keep main thread alive
+        while True:
+            time.sleep(60)
 
     except Exception as e:
         logging.error(f"❌ Fatal startup error: {e}", exc_info=True)

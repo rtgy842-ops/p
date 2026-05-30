@@ -87,15 +87,39 @@ if __name__ == '__main__':
         provider_registry.load_from_db()
         logging.info("✅ Provider registry initialized")
 
-        bot.remove_webhook()
-        time.sleep(0.5)
-        webhook_url = os.getenv('ADMIN_WEBHOOK_URL', os.getenv('WEBHOOK_URL', ''))
-        if webhook_url:
-            bot.set_webhook(url=webhook_url + '/')
-            logging.info(f"✅ Admin webhook set to {webhook_url}")
+        # Set webhook — non-fatal
+        try:
+            bot.remove_webhook()
+            time.sleep(0.5)
+            webhook_url = os.getenv('ADMIN_WEBHOOK_URL', os.getenv('WEBHOOK_URL', ''))
+            if webhook_url:
+                bot.set_webhook(url=webhook_url + '/')
+                logging.info(f"✅ Admin webhook set to {webhook_url}")
+        except Exception as we:
+            logging.warning(f"⚠️ Admin webhook setup failed: {we}")
 
+        # Start Flask in thread for health checks
+        import threading
         port = int(os.getenv('FLASK_PORT', '5000'))
-        app.run(host='0.0.0.0', port=port, debug=False)
+        flask_thread = threading.Thread(
+            target=lambda: app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False),
+            daemon=True
+        )
+        flask_thread.start()
+        logging.info(f"✅ Admin Flask started on port {port}")
+
+        # Retry webhook
+        time.sleep(3)
+        try:
+            webhook_url = os.getenv('ADMIN_WEBHOOK_URL', os.getenv('WEBHOOK_URL', ''))
+            if webhook_url:
+                bot.set_webhook(url=webhook_url + '/')
+                logging.info(f"✅ Admin webhook set to {webhook_url}")
+        except Exception:
+            logging.warning("⚠️ Admin webhook retry failed — set manually")
+
+        while True:
+            time.sleep(60)
 
     except Exception as e:
         logging.error(f"❌ Fatal admin startup error: {e}", exc_info=True)
