@@ -4,7 +4,6 @@ tests/conftest.py — Shared Test Fixtures
 Provides isolated test databases, service instances, and cleanup.
 All tests use TEMPORARY databases — NEVER production data.
 """
-
 import os
 import shutil
 import sqlite3
@@ -12,7 +11,6 @@ import tempfile
 
 import pytest
 
-# ── Isolated test database ─────────────────────────────────────
 
 @pytest.fixture
 def test_db():
@@ -22,7 +20,6 @@ def test_db():
     conn = sqlite3.connect(db_path)
     conn.execute('PRAGMA foreign_keys=ON')
 
-    # Create essential tables
     conn.executescript('''
         CREATE TABLE users (
             user_id INTEGER PRIMARY KEY,
@@ -76,6 +73,81 @@ def test_db():
             admin_response TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
+
+        CREATE TABLE referral_codes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            code TEXT NOT NULL UNIQUE,
+            is_active INTEGER DEFAULT 1,
+            usage_count INTEGER DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE referrals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            referrer_id INTEGER NOT NULL,
+            referred_id INTEGER NOT NULL UNIQUE,
+            code TEXT NOT NULL,
+            status TEXT DEFAULT 'active',
+            commission_pct INTEGER DEFAULT 10,
+            total_earned INTEGER DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE admin_roles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL UNIQUE,
+            role TEXT NOT NULL DEFAULT 'admin',
+            assigned_by INTEGER,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE subscriptions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL UNIQUE,
+            tier TEXT NOT NULL DEFAULT 'free',
+            status TEXT NOT NULL DEFAULT 'active',
+            started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            expires_at DATETIME,
+            auto_renew INTEGER DEFAULT 1,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE wallet_ledger (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            amount INTEGER NOT NULL,
+            entry_type TEXT NOT NULL,
+            running_balance INTEGER NOT NULL,
+            description TEXT DEFAULT '',
+            ref_id TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE fraud_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            event_type TEXT NOT NULL,
+            risk_score INTEGER DEFAULT 0,
+            details TEXT DEFAULT '{}',
+            ip_address TEXT DEFAULT '',
+            device_fingerprint TEXT DEFAULT '',
+            action_taken TEXT DEFAULT 'logged',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE providers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            display_name TEXT NOT NULL,
+            is_active INTEGER DEFAULT 1,
+            priority INTEGER DEFAULT 0,
+            config TEXT DEFAULT '{}',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
     ''')
     conn.commit()
 
@@ -84,8 +156,6 @@ def test_db():
     conn.close()
     shutil.rmtree(tmpdir)
 
-
-# ── Test user fixture ──────────────────────────────────────────
 
 @pytest.fixture
 def test_user(test_db):
@@ -99,8 +169,6 @@ def test_user(test_db):
     return 123456789
 
 
-# ── Test admin fixture ─────────────────────────────────────────
-
 @pytest.fixture
 def test_admin(test_db):
     """Create a test admin user."""
@@ -112,8 +180,6 @@ def test_admin(test_db):
     conn.commit()
     return 1457637832
 
-
-# ── Mock Bot fixture ───────────────────────────────────────────
 
 @pytest.fixture
 def mock_bot_config(monkeypatch):

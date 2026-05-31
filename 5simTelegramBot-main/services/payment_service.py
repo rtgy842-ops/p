@@ -324,7 +324,7 @@ class PaymentService:
                     (user_id,))
                 if row is None:
                     db.execute(
-                        'INSERT INTO users (user_id, balance) VALUES (%s, %s) ON CONFLICT DO NOTHING',
+                        'INSERT INTO users (user_id, balance) VALUES (%s, %s) ON CONFLICT (user_id) DO NOTHING',
                         (user_id, amount))
                     new_balance = amount
                 else:
@@ -391,7 +391,7 @@ class PaymentService:
                     (user_id,))
                 if row is None:
                     db.execute(
-                        'INSERT INTO users (user_id, balance) VALUES (%s, %s) ON CONFLICT DO NOTHING',
+                        'INSERT INTO users (user_id, balance) VALUES (%s, %s) ON CONFLICT (user_id) DO NOTHING',
                         (user_id, amount))
                 else:
                     new_balance = int(row[0]) + amount

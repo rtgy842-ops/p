@@ -54,11 +54,10 @@ class NotificationService:
         """
         try:
             # Try async dispatch via Celery
-            from tasks.notifications import send_notification_task
-            send_notification_task.delay(
+            from tasks import send_notification
+            send_notification.delay(
                 user_id=user_id,
-                notification_type=notification_type.value,
-                data=data,
+                message=str(data),
                 channel=channel.value,
             )
             return True

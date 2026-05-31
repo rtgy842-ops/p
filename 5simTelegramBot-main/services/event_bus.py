@@ -74,7 +74,7 @@ class EventBus:
         Non-blocking — schedules and returns immediately.
         """
         try:
-            from tasks.events import emit_event_task
+            from tasks import emit_event_task
             emit_event_task.delay(event, data or {})
         except ImportError:
             # Fallback to sync if Celery not available

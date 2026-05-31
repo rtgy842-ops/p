@@ -81,11 +81,10 @@ class AntiFraudEngine:
         checks.append(dup_check)
         total_score += dup_check['score']
 
-        # 5. Amount anomaly
-        if amount > 0:
-            amount_check = self._check_amount(user_id, amount, action)
-            checks.append(amount_check)
-            total_score += amount_check['score']
+        # 5. Amount anomaly — always check (zero/negative = suspicious)
+        amount_check = self._check_amount(user_id, amount, action)
+        checks.append(amount_check)
+        total_score += amount_check['score']
 
         # Determine risk level
         if total_score >= self.BLOCK_THRESHOLD:

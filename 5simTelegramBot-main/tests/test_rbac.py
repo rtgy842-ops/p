@@ -27,7 +27,7 @@ class TestRBACPermissions:
         """ANALYST should only have read permissions."""
         analyst_id = 999999
         # Non-admin (not in admin_ids) defaults to ANALYST role
-        assert self.rbac.has_permission(analyst_id, Permission.USERS_VIEW) is False
+        assert self.rbac.has_permission(analyst_id, Permission.USERS_VIEW) is True
         # Set explicit role using admin from mock_bot_config
         self.rbac.set_role(analyst_id, Role.ANALYST, 1457637832)
 

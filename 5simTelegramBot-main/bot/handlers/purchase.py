@@ -87,11 +87,12 @@ def handle_buy_number_with_params(call):
             return
 
         with db_context('default', transactional=True) as db:
-            db.execute(
+            # Use INSERT INTO ... RETURNING id to get order_id atomically
+            db._cursor.execute(
                 """INSERT INTO orders (user_id, activation_id, service, country, operator, phone, price, status)
                    VALUES (%s, %s, %s, %s, %s, %s, %s, 'PENDING') RETURNING id""",
                 (user_id, activation_id, service, country, operator, phone_number, price_toman))
-            order_row = db.fetchone("SELECT lastval()")
+            order_row = db._cursor.fetchone()
             order_id = order_row[0] if order_row else None
 
         if order_id:

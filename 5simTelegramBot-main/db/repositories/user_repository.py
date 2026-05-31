@@ -67,7 +67,7 @@ class UserRepository(BaseRepository):
                 # SELECT ... FOR UPDATE to prevent race conditions
                 row = db.fetchone('SELECT balance FROM users WHERE user_id = %s FOR UPDATE', (user_id,))
                 if row is None:
-                    db.execute('INSERT INTO users (user_id, balance) VALUES (%s, %s) ON CONFLICT DO NOTHING', (user_id, max(amount, 0)))
+                    db.execute('INSERT INTO users (user_id, balance) VALUES (%s, %s) ON CONFLICT (user_id) DO NOTHING', (user_id, max(amount, 0)))
                     return max(amount, 0)
                 new_balance = row[0] + amount
                 if new_balance < 0:
@@ -102,7 +102,7 @@ class UserRepository(BaseRepository):
                 # SELECT ... FOR UPDATE to prevent race conditions
                 row = db.fetchone('SELECT balance FROM users WHERE user_id = %s FOR UPDATE', (user_id,))
                 if row is None:
-                    db.execute('INSERT INTO users (user_id, balance) VALUES (%s, %s) ON CONFLICT DO NOTHING', (user_id, amount))
+                    db.execute('INSERT INTO users (user_id, balance) VALUES (%s, %s) ON CONFLICT (user_id) DO NOTHING', (user_id, amount))
                     return amount
                 new_balance = row[0] + amount
                 db.execute('UPDATE users SET balance = %s WHERE user_id = %s', (new_balance, user_id))

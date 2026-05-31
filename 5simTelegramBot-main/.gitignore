@@ -1,8 +1,5 @@
 # ── Secrets & Environment ──────────────────────────
 .env
-*.env
-.env.*
-!.env.example
 .env.bak
 .env.backup
 .env.local
@@ -17,6 +14,8 @@ id_rsa*
 config/secrets.*
 secrets/
 secret/
+setup_log.txt
+startup_result.json
 
 # ── Database Files ──────────────────────────────────
 *.db

@@ -37,11 +37,11 @@ class OrderRepository(BaseRepository):
         try:
             with db_context(self.db_name, transactional=True) as db:
                 db.execute(
-                    'INSERT INTO orders (user_id, activation_id, service, country, operator, phone, price, status) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)',
+                    'INSERT INTO orders (user_id, activation_id, service, country, operator, phone, price, status) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id',
                     (order_data['user_id'], order_data['activation_id'], order_data['service'],
                      order_data['country'], order_data['operator'], order_data['phone'],
                      order_data['price'], order_data['status']))
-                row = db.fetchone('SELECT lastval()')
+                row = db._cursor.fetchone()
                 return row[0] if row else 0
         except Exception as e:
             logger.error(f"Error creating order: {e}")
@@ -78,5 +78,7 @@ class OrderRepository(BaseRepository):
         if days == 0:
             row = self._fetchone("SELECT COALESCE(SUM(price), 0) FROM orders WHERE created_at::date = CURRENT_DATE")
         else:
-            row = self._fetchone(f"SELECT COALESCE(SUM(price), 0) FROM orders WHERE created_at::date >= CURRENT_DATE - INTERVAL '{days} days'")
+            row = self._fetchone(
+                "SELECT COALESCE(SUM(price), 0) FROM orders WHERE created_at::date >= CURRENT_DATE - (%s || ' days')::INTERVAL",
+                (str(days),))
         return row[0] if row else 0
