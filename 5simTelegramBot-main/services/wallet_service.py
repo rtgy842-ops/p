@@ -105,12 +105,16 @@ class WalletService:
                         'UPDATE users SET balance = %s WHERE user_id = %s',
                         (new_balance, user_id))
 
-                # Insert transaction log in same transaction
+                # Insert transaction log + wallet_ledger in same transaction
                 db.execute(
                     """INSERT INTO transactions (user_id, amount, type, description, ref_id)
                        VALUES (%s, %s, %s, %s, %s)""",
                     (user_id, amount, 'deposit',
-                     description or 'افزایش موجودی', ref_id))
+                     description or 'deposit', ref_id))
+                db.execute(
+                    """INSERT INTO wallet_ledger (user_id, amount, entry_type, running_balance, description, ref_id)
+                       VALUES (%s, %s, 'deposit', %s, %s, %s)""",
+                    (user_id, amount, new_balance, description or 'deposit', ref_id))
 
             logger.info(f"Deposit: user={user_id}, amount={amount}, new_balance={new_balance}")
             return new_balance

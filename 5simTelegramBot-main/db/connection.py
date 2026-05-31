@@ -97,7 +97,7 @@ class ConnectionManager:
 
     def close_all(self):
         """Close the connection pool."""
-        if self._pool:
+        if hasattr(self, '_pool') and self._pool:
             self._pool.closeall()
             logger.info("PostgreSQL connection pool closed")
 
@@ -110,4 +110,7 @@ class ConnectionManager:
         }
 
     def __del__(self):
-        self.close_all()
+        try:
+            self.close_all()
+        except Exception:
+            pass

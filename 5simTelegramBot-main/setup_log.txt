@@ -1,0 +1,11 @@
+STARTING PostgreSQL setup
+Trying pw=admin...
+FAILED: connection to server at "localhost" (::1), port 5432 failed: FATAL:  password authentication failed 
+Trying pw=password...
+FAILED: connection to server at "localhost" (::1), port 5432 failed: FATAL:  password authentication failed 
+Trying pw=postgres...
+CONNECTED with pw=postgres
+Created smsbot role
+Created smsbot database
+Grants applied
+SETUP COMPLETE

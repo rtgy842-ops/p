@@ -3,6 +3,9 @@
 admin_bot.py — Admin Bot (WEBHOOK mode — receives updates via POST /)
 """
 import logging, time, os, sys, threading
+from dotenv import load_dotenv
+load_dotenv()
+
 from flask import Flask, request
 import telebot
 
