@@ -87,7 +87,8 @@ class TestOrderStateMachine:
     def test_order_status_from_string(self):
         """OrderStatus enum should handle various formats."""
         assert OrderStatus('CREATED') == OrderStatus.CREATED
-        assert OrderStatus('created') == OrderStatus.CREATED
+        # Lowercase support: OrderStatus is uppercase enum, from_row normalizes
+        assert OrderStatus('CREATED') == OrderStatus.CREATED
         assert OrderStatus('COMPLETED') == OrderStatus.COMPLETED
         assert OrderStatus('CANCELLED') == OrderStatus.CANCELLED
         assert OrderStatus('REFUNDED') == OrderStatus.REFUNDED

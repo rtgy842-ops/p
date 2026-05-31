@@ -317,14 +317,14 @@ class TestConfigSecurity:
             assert pattern not in content, f"Hardcoded secret found: {pattern}"
 
     def test_require_function_exists(self):
-        """Verify _require function is defined."""
+        """Verify _env function is defined (renamed from _require)."""
         config_path = os.path.join(
             os.path.dirname(os.path.dirname(__file__)),
             'config.py'
         )
         with open(config_path, 'r', encoding='utf-8') as f:
             content = f.read()
-        assert 'def _require(' in content, "_require() function not found"
+        assert 'def _env(' in content, "_env() function not found"
         assert 'RuntimeError' in content, "RuntimeError not raised for missing secrets"
 
 

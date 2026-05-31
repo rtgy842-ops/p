@@ -80,4 +80,11 @@ class UserService:
     def get_all_ids(self) -> list[int]:
         """Get all user IDs for broadcast."""
         rows = self._user_repo.get_all_ids()
-        return [r['user_id'] for r in rows]
+        # psycopg2 returns tuples by default; handle both tuple and dict cases
+        result: list[int] = []
+        for r in rows:
+            if isinstance(r, dict):
+                result.append(r.get('user_id', 0))
+            else:
+                result.append(r[0])
+        return result

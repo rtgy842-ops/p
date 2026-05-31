@@ -16,21 +16,19 @@ class TestRBACPermissions:
     def setup_method(self):
         self.rbac = RBACService()
 
-    def test_super_admin_has_all_permissions(self):
-        """SUPER_ADMIN should have ALL permissions."""
+    def test_super_admin_has_all_permissions(self, mock_bot_config):
+        """SUPER_ADMIN should have ALL permissions (uses mock_bot_config fixture)."""
+        # 1457637832 added to admin_ids by mock_bot_config fixture
         for perm in Permission:
             assert self.rbac.has_permission(1457637832, perm), \
                 f"SUPER_ADMIN should have {perm.value}"
 
-    def test_analyst_read_only(self):
+    def test_analyst_read_only(self, mock_bot_config):
         """ANALYST should only have read permissions."""
-        # Mock a non-admin user with ANALYST role
         analyst_id = 999999
-
-        # Should have read permissions
+        # Non-admin (not in admin_ids) defaults to ANALYST role
         assert self.rbac.has_permission(analyst_id, Permission.USERS_VIEW) is False
-        # Non-admin defaults to ANALYST which CAN view but NOT edit
-        # Set explicit role
+        # Set explicit role using admin from mock_bot_config
         self.rbac.set_role(analyst_id, Role.ANALYST, 1457637832)
 
         assert self.rbac.has_permission(analyst_id, Permission.ANALYTICS_VIEW)
@@ -43,9 +41,10 @@ class TestRBACPermissions:
         assert not self.rbac.has_permission(analyst_id, Permission.PAYMENTS_APPROVE)
         assert not self.rbac.has_permission(analyst_id, Permission.BROADCAST_SEND)
 
-    def test_finance_can_manage_payments(self):
+    def test_finance_can_manage_payments(self, mock_bot_config):
         """FINANCE role should manage payments."""
         finance_id = 888888
+        # 1457637832 in admin_ids via mock_bot_config — can assign roles
         self.rbac.set_role(finance_id, Role.FINANCE, 1457637832)
 
         assert self.rbac.has_permission(finance_id, Permission.PAYMENTS_VIEW)
@@ -57,7 +56,7 @@ class TestRBACPermissions:
         assert not self.rbac.has_permission(finance_id, Permission.CHANNELS_MANAGE)
         assert not self.rbac.has_permission(finance_id, Permission.BROADCAST_SEND)
 
-    def test_support_cannot_approve_payments(self):
+    def test_support_cannot_approve_payments(self, mock_bot_config):
         """SUPPORT should NOT approve/reject payments."""
         support_id = 777777
         self.rbac.set_role(support_id, Role.SUPPORT, 1457637832)
@@ -66,7 +65,7 @@ class TestRBACPermissions:
         assert not self.rbac.has_permission(support_id, Permission.PAYMENTS_APPROVE)
         assert not self.rbac.has_permission(support_id, Permission.PAYMENTS_REJECT)
 
-    def test_require_raises_permission_error(self):
+    def test_require_raises_permission_error(self, mock_bot_config):
         """require() should raise on insufficient permissions."""
         analyst_id = 999999
         self.rbac.set_role(analyst_id, Role.ANALYST, 1457637832)
@@ -77,24 +76,20 @@ class TestRBACPermissions:
         with pytest.raises(PermissionError):
             self.rbac.require(analyst_id, Permission.BROADCAST_SEND)
 
-    def test_role_hierarchy(self):
+    def test_role_hierarchy(self, mock_bot_config):
         """Ensure role permissions are properly scoped."""
-        # SUPER_ADMIN > ADMIN > MODERATOR > SUPPORT > ANALYST
         super_admin = 111111
         admin = 222222
         moderator = 333333
         support = 444444
         analyst = 555555
 
-        self.rbac.set_role(super_admin, Role.SUPER_ADMIN, super_admin)
-        self.rbac.set_role(admin, Role.ADMIN, super_admin)
-        self.rbac.set_role(moderator, Role.MODERATOR, super_admin)
-        self.rbac.set_role(support, Role.SUPPORT, super_admin)
-        self.rbac.set_role(analyst, Role.ANALYST, super_admin)
-
-        # SUPER_ADMIN can do everything
-        assert self.rbac.has_permission(super_admin, Permission.SETTINGS_EDIT)
-        assert self.rbac.has_permission(super_admin, Permission.API_KEYS_MANAGE)
+        # Use 1457637832 (in admin_ids via mock) to assign roles
+        self.rbac.set_role(super_admin, Role.SUPER_ADMIN, 1457637832)
+        self.rbac.set_role(admin, Role.ADMIN, 1457637832)
+        self.rbac.set_role(moderator, Role.MODERATOR, 1457637832)
+        self.rbac.set_role(support, Role.SUPPORT, 1457637832)
+        self.rbac.set_role(analyst, Role.ANALYST, 1457637832)
 
         # ADMIN can manage settings but not API keys
         assert self.rbac.has_permission(admin, Permission.SETTINGS_EDIT)

@@ -717,7 +717,7 @@ def _process_set_price(message):
             final_price = round(base_price * (1 + profit_pct / 100) + profit_fixed, 4)
 
         cat.set_pricing(country, service, provider_id, base_price,
-                        profit_pct, profit_fixed, final_price, 0, 0)
+                        profit_pct, profit_fixed)
 
         _bot.reply_to(message,
             f"✅ Price rule set:\n"

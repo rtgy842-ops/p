@@ -108,3 +108,6 @@ SERVICE_CODE_MAP = {
     'telegram': 'tg', 'whatsapp': 'wa',
     'instagram': 'ig', 'google': 'go',
 }
+
+# Webhook secret token — MUST be set in production for Telegram webhook verification
+WEBHOOK_SECRET_TOKEN = os.getenv('WEBHOOK_SECRET_TOKEN', '')

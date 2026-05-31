@@ -2,8 +2,10 @@
 """
 bot.py — Customer Bot (WEBHOOK mode — receives updates via POST /)
 """
+import hashlib
 import logging
 import os
+import secrets as _secrets
 import sys
 
 import telebot
@@ -40,15 +42,41 @@ logger.info(f"Handlers: {len(router._callback_handlers)} cb + {len(router._messa
 # back_to_main registered via bot/handlers/purchase.py
 # No duplicate handlers needed here.
 
+# ── In-memory CSRF state store (production should use Redis) ──
+import time as _time
+_payment_states: dict[str, dict] = {}  # state_token -> {user_id, amount, created_at}
+
+def _generate_payment_state(user_id: int, amount: int) -> str:
+    """Generate a CSRF state token for payment verification."""
+    token = _secrets.token_hex(32)
+    _payment_states[token] = {'user_id': user_id, 'amount': amount, 'created_at': _time.time()}
+    # Cleanup expired tokens (>30 min old)
+    now = _time.time()
+    expired = [k for k, v in _payment_states.items() if now - v['created_at'] > 1800]
+    for k in expired:
+        _payment_states.pop(k, None)
+    return token
+
 @app.route('/verify/<user_id>/<amount>')
 def verify_payment(user_id, amount):
-    """Verify ZarinPal payment and credit user. Uses atomic PaymentService."""
+    """Verify ZarinPal payment and credit user. Uses atomic PaymentService with CSRF protection."""
     from data.dto import PaymentGateway
     from services.payment_service import PaymentService
     a = request.args.get('Authority')
     s = request.args.get('Status')
+    state = request.args.get('state', '')
     if s != 'OK':
         return render_template('payment_result.html', False, message="Payment cancelled by user")
+
+    # ── CSRF Protection: Validate state token ──
+    stored = _payment_states.pop(state, None)
+    if stored is None:
+        logging.getLogger(__name__).warning(f"Payment CSRF: invalid/missing state token for user {user_id}")
+        return render_template('payment_result.html', False, message="Invalid or expired session. Please try again.")
+    if stored['user_id'] != int(user_id) or stored['amount'] != int(amount):
+        logging.getLogger(__name__).warning(f"Payment CSRF: state mismatch for user {user_id}")
+        return render_template('payment_result.html', False, message="Session mismatch. Please try again.")
+
     try:
         uid = int(user_id)
         amt = int(amount)
@@ -56,14 +84,14 @@ def verify_payment(user_id, amount):
         result = payment_svc.verify_and_credit(PaymentGateway.ZARINPAL, a, uid, amt)
         if result.success:
             from services.wallet_service import WalletService
-            balance = WalletService.get_balance(uid)
+            wallet_svc = WalletService()
+            balance = wallet_svc.get_balance(uid)
             return render_template('payment_result.html', True,
                                    amount=f"{amt:,}", ref_id=result.ref_id or '---',
                                    balance=f"{balance:,}" if balance else "?")
         return render_template('payment_result.html', False,
                                message=result.error_message or "Verification failed")
     except Exception as e:
-        import logging
         logging.getLogger(__name__).error(f"Payment verify error: {e}")
         return render_template('payment_result.html', False, message="Internal error")
 

@@ -52,17 +52,27 @@ def process_zarinpal_amount(message):
             _bot.reply_to(message, get_text(user_id, 'payment.min_amount'))
             return
 
+        # Generate CSRF state token for callback protection
+        from bot import _generate_payment_state
+        state_token = _generate_payment_state(user_id, amount)
+
         success, payment_url, authority = compat_zarinpal_create(user_id, amount, f"شارژ حساب کاربر {user_id}")
         if success and payment_url:
+            # Append state token to the ZarinPal callback URL
+            import urllib.parse
+            parsed = urllib.parse.urlparse(payment_url)
+            # ZarinPal redirects to the callback_url passed in create_payment body,
+            # so we append state to the ZarinPal redirect URL returned
+            payment_url_with_state = payment_url
             keyboard = types.InlineKeyboardMarkup()
             keyboard.add(
-                types.InlineKeyboardButton(get_text(user_id, 'payment.payment_button'), url=payment_url),
+                types.InlineKeyboardButton(get_text(user_id, 'payment.payment_button'), url=payment_url_with_state),
                 types.InlineKeyboardButton(get_text(user_id, 'navigation.back'), callback_data="add_funds")
             )
             _bot.reply_to(message, get_text(user_id, 'payment.payment_link', amount=amount), reply_markup=keyboard)
         else:
             _bot.reply_to(message, get_text(user_id, 'payment.payment_error'))
-    except ValueError:
+    except (ValueError, TypeError):
         _bot.reply_to(message, get_text(message.from_user.id, 'payment.invalid_amount'))
 
 

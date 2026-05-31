@@ -120,7 +120,8 @@ ALL_TABLES: dict[str, str] = {
             expires_at      TIMESTAMP,
             auto_renew      INTEGER DEFAULT 1,
             created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id)
         )
     ''',
     'referrals': '''
