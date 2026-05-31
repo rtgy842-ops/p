@@ -6,9 +6,9 @@ All use compat layer (PaymentService gateways ready).
 """
 
 import logging
+
 from bot.router import router
 from i18n import get_text
-from config import BOT_CONFIG
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +42,7 @@ def handle_zarinpal_payment(call):
 
 def process_zarinpal_amount(message):
     from telebot import types
+
     from compat.legacy_facade import payment_create_zarinpal as compat_zarinpal_create
 
     try:

@@ -6,10 +6,12 @@ Now uses enterprise CardPaymentRepository + WalletService.
 No direct sqlite3 connections.
 """
 
-from telebot import types
 import logging
-from config import BOT_CONFIG
+
+from telebot import types
+
 from compat.legacy_facade import add_balance as compat_add_balance
+from config import BOT_CONFIG
 from db.repositories.card_payment_repository import CardPaymentRepository
 from db.repositories.settings_repository import SettingsRepository
 from i18n import get_text
@@ -19,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 class CardPayment:
     """Card-to-Card payment flow handler."""
-    
+
     def __init__(self, bot):
         self.bot = bot
         self._payment_repo = CardPaymentRepository()
@@ -107,7 +109,7 @@ class CardPayment:
         try:
             file_id = message.photo[-1].file_id
             self._payment_repo.update_receipt(payment_id, file_id)
-            
+
             payment = self._payment_repo.find_by_id(payment_id)
             amount = payment['amount'] if payment else 0
 
@@ -145,7 +147,7 @@ class CardPayment:
                 get_text(user_id, 'navigation.back_to_main'),
                 callback_data="back_to_main"
             ))
-            
+
             self.bot.send_message(
                 message.chat.id,
                 get_text(user_id, 'payment.receipt_sent'),
@@ -190,7 +192,7 @@ class CardPayment:
             new_balance = compat_add_balance(user_id, amount,
                 description='Card-to-card payment approved',
                 ref_id=payment_id)
-            
+
             if new_balance is not None:
                 self._payment_repo.approve(payment_id, admin_id)
 
@@ -205,7 +207,7 @@ class CardPayment:
                         callback_data="back_to_main"
                     )
                 )
-                
+
                 self.bot.send_message(
                     user_id,
                     get_text(user_id, 'payment.approved_user',
@@ -252,7 +254,7 @@ class CardPayment:
                 get_text(admin_id, 'navigation.back_to_main'),
                 callback_data="back_to_main"
             ))
-            
+
             self.bot.reply_to(
                 message,
                 get_text(admin_id, 'payment.rejection_sent'),

@@ -1,5 +1,9 @@
 """Startup test — launches bot.py, captures output, terminates."""
-import subprocess, sys, os, time, json
+import json
+import os
+import subprocess
+import sys
+import time
 
 os.chdir(r'c:\Users\MC\Downloads\5simTelegramBot-main\5simTelegramBot-main')
 RESULT = {}

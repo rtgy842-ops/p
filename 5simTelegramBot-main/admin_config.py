@@ -7,6 +7,7 @@ Backward-compatible API for bot.py callers.
 """
 
 import logging
+
 from db.repositories.settings_repository import SettingsRepository
 
 logger = logging.getLogger(__name__)

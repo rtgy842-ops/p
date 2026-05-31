@@ -8,6 +8,7 @@ so tests and imports don't crash without .env.
 """
 
 import os
+
 from dotenv import load_dotenv
 
 try:

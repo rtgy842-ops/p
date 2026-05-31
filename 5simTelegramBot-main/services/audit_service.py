@@ -11,9 +11,9 @@ Records ALL sensitive admin actions with:
 This is the compliance-grade audit system.
 """
 
-import logging
 import json
-from datetime import datetime
+import logging
+
 from db.connection import ConnectionManager
 from db.context import db_context
 
@@ -96,7 +96,6 @@ class AuditService:
 
     def get_recent(self, limit: int = 50, admin_id: int | None = None):
         """Get recent audit entries, optionally filtered by admin."""
-        from db.connection import ConnectionManager
         cm = ConnectionManager.get_instance()
         conn = cm.get_connection('default')
         cursor = conn.cursor()
@@ -118,7 +117,6 @@ class AuditService:
 
     def get_by_action(self, action: str, limit: int = 50):
         """Get audit entries filtered by action type."""
-        from db.connection import ConnectionManager
         cm = ConnectionManager.get_instance()
         conn = cm.get_connection('default')
         cursor = conn.cursor()

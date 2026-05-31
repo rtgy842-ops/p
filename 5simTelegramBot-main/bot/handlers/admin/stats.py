@@ -5,10 +5,12 @@ Uses UserRepository + SettingsRepository — no direct sqlite3.
 """
 
 import logging
-from bot.router import router
-from i18n import get_text
-from config import BOT_CONFIG
+
 from telebot import types
+
+from bot.router import router
+from config import BOT_CONFIG
+from i18n import get_text
 
 logger = logging.getLogger(__name__)
 _bot = None
@@ -26,9 +28,9 @@ def handle_admin_stats(call):
         _bot.answer_callback_query(call.id, get_text(user_id, 'errors.no_access'))
         return
     try:
-        from db.repositories.user_repository import UserRepository
-        from db.repositories.settings_repository import SettingsRepository
         from db.repositories.order_repository import OrderRepository
+        from db.repositories.settings_repository import SettingsRepository
+        from db.repositories.user_repository import UserRepository
 
         user_repo = UserRepository()
         settings_repo = SettingsRepository()

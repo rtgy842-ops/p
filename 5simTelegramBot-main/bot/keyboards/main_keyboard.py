@@ -5,6 +5,7 @@ Centralized keyboard builders imported by handlers.
 """
 
 from telebot import types
+
 from i18n import get_text
 
 

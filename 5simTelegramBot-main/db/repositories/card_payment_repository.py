@@ -4,8 +4,9 @@ db/repositories/card_payment_repository.py — Card Payment Repository (PostgreS
 
 import logging
 import time
-from db.repositories.base import BaseRepository
+
 from db.context import db_context
+from db.repositories.base import BaseRepository
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,7 @@ class CardPaymentRepository(BaseRepository):
             with db_context(self.db_name, transactional=True) as db:
                 db.execute('UPDATE card_payments SET receipt = %s WHERE payment_id = %s', (receipt_file_id, payment_id))
             return True
-        except Exception as e:
+        except Exception:
             return False
 
     def approve(self, payment_id: str, admin_id: int) -> bool:
@@ -46,7 +47,7 @@ class CardPaymentRepository(BaseRepository):
                 db.execute("UPDATE card_payments SET status = 'approved', admin_response = %s WHERE payment_id = %s",
                            (f"Approved by {admin_id}", payment_id))
                 return True
-        except Exception as e:
+        except Exception:
             return False
 
     def reject(self, payment_id: str, reason: str) -> bool:
@@ -58,7 +59,7 @@ class CardPaymentRepository(BaseRepository):
                 db.execute("UPDATE card_payments SET status = 'rejected', admin_response = %s WHERE payment_id = %s",
                            (reason, payment_id))
                 return True
-        except Exception as e:
+        except Exception:
             return False
 
     def list_recent(self, limit: int = 5):

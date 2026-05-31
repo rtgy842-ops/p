@@ -9,6 +9,7 @@ FIX: Exact-match patterns are tried BEFORE prefix patterns.
 """
 
 import logging
+
 from bot.error_handler import error_boundary
 from bot.middleware import default_pipeline
 

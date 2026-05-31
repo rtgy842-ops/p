@@ -3,12 +3,14 @@ bot/handlers/admin/operators.py — Admin Operator Settings
 """
 
 import logging
-from bot.router import router
-from i18n import get_text
-from config import BOT_CONFIG
-from operator_config import OperatorConfig
-from data.service_countries import SERVICE_COUNTRIES, ALL_SERVICES
+
 from telebot import types
+
+from bot.router import router
+from config import BOT_CONFIG
+from data.service_countries import ALL_SERVICES, SERVICE_COUNTRIES
+from i18n import get_text
+from operator_config import OperatorConfig
 
 logger = logging.getLogger(__name__)
 _bot = None

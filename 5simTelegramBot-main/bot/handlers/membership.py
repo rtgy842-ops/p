@@ -5,10 +5,10 @@ check_membership — verifies user joined required channels.
 """
 
 import logging
+
+from admin_config import AdminConfig
 from bot.router import router
 from i18n import get_text
-from config import BOT_CONFIG
-from admin_config import AdminConfig
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +23,7 @@ def init(bot_instance):
 @router.callback('check_membership')
 def check_membership(call):
     from telebot import types
+
     from bot.keyboards.main_keyboard import main_menu_keyboard
 
     try:

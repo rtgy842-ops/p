@@ -15,15 +15,14 @@ Zero Telegram dependencies — pure business logic.
 """
 
 import logging
-from datetime import datetime
-from data.dto import OrderStatus
-from db.repositories.settings_repository import SettingsRepository
-from db.repositories.user_repository import UserRepository
-from db.repositories.order_repository import OrderRepository
-from db.repositories.transaction_repository import TransactionRepository
+
 from db.repositories.card_payment_repository import CardPaymentRepository
-from services.wallet_service import WalletService
+from db.repositories.order_repository import OrderRepository
+from db.repositories.settings_repository import SettingsRepository
+from db.repositories.transaction_repository import TransactionRepository
+from db.repositories.user_repository import UserRepository
 from services.order_service import OrderService
+from services.wallet_service import WalletService
 
 logger = logging.getLogger(__name__)
 

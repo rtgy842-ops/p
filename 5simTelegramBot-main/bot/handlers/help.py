@@ -6,9 +6,10 @@ THIN handler — only constructs keyboards and displays text.
 """
 
 import logging
+
 from telebot import types
+
 from bot.client import telegram_client
-from bot.keyboards.main_keyboard import back_to_main_button
 from i18n import get_text
 
 logger = logging.getLogger(__name__)

@@ -7,7 +7,9 @@ Allows customers to:
 - Upgrade/downgrade (admin only for now)
 """
 import logging
+
 from telebot import types
+
 from bot.router import router
 from i18n import get_text
 
@@ -23,7 +25,7 @@ def init(bot_instance):
 @router.callback('subscriptions')
 def show_subscription_menu(call):
     """Main subscription page."""
-    from services.subscription_service import subscriptions, SubscriptionTier
+    from services.subscription_service import SubscriptionTier, subscriptions
     user_id = call.from_user.id
 
     tier = subscriptions.get_tier(user_id)

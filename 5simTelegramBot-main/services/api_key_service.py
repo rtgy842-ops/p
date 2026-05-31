@@ -9,9 +9,9 @@ Production-grade API key lifecycle:
 - Expiration
 """
 
+import hashlib
 import logging
 import secrets
-import hashlib
 from datetime import datetime, timedelta
 from enum import Enum
 

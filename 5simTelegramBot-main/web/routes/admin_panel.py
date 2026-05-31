@@ -6,8 +6,9 @@ Accessible via secure link from Admin Bot.
 """
 
 import os
-from flask import Blueprint, render_template, jsonify, request, session
 from functools import wraps
+
+from flask import Blueprint, jsonify, render_template, request, session
 
 admin_panel_bp = Blueprint('admin_panel', __name__, template_folder='../../templates')
 
@@ -38,8 +39,8 @@ def dashboard():
 def api_dashboard():
     from services.admin_service import AdminService
     from services.analytics_service import analytics
-    from services.provider_registry import provider_registry
     from services.catalog_manager import catalog as cat
+    from services.provider_registry import provider_registry
 
     admin = AdminService()
     stats = admin.get_stats()
@@ -62,8 +63,8 @@ def api_dashboard():
 @admin_panel_bp.route('/admin/api/users')
 @require_admin
 def api_users():
-    from services.user_service import UserService
     from services.subscription_service import subscriptions
+    from services.user_service import UserService
 
     user_svc = UserService()
     users = user_svc.list_recent(100)
@@ -133,9 +134,9 @@ def api_audit():
 @admin_panel_bp.route('/admin/api/health')
 @require_admin
 def api_health():
-    from services.provider_registry import provider_registry
-    import psycopg2
     import time
+
+    from services.provider_registry import provider_registry
 
     health_data = {
         'status': 'ok',

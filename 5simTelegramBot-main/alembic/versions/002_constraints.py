@@ -7,6 +7,7 @@ Create Date: 2026-05-31
 Add missing constraints, indexes, and unique checks for enterprise-grade data integrity.
 """
 from typing import Sequence, Union
+
 from alembic import op
 
 revision: str = '002_constraints'

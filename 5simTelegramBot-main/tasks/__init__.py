@@ -11,9 +11,10 @@ Background workers for:
 - Backup automation
 """
 
+import os
+
 from celery import Celery
 from celery.schedules import crontab
-import os
 
 # Celery app instance
 CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')
@@ -73,8 +74,8 @@ app.conf.beat_schedule = {
 @app.task(bind=True, name='tasks.sync_provider_prices')
 def sync_provider_prices(self):
     """Sync prices and stock from all active providers (every 30s)."""
-    from services.provider_sync import provider_sync
     from services.provider_registry import provider_registry
+    from services.provider_sync import provider_sync
 
     for provider in provider_registry.active_providers:
         name = provider.provider_name

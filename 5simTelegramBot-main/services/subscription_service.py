@@ -10,9 +10,9 @@ Tiers:
     ENTERPRISE — Custom, API access, SLA
 """
 
-from enum import Enum
-from dataclasses import dataclass
 import logging
+from dataclasses import dataclass
+from enum import Enum
 
 logger = logging.getLogger(__name__)
 
@@ -140,7 +140,7 @@ class SubscriptionService:
         Upgrade/downgrade a user's subscription.
         Persists to database. Requires admin permission.
         """
-        from services.rbac_service import rbac, Permission
+        from services.rbac_service import Permission, rbac
         if not rbac.has_permission(admin_id, Permission.USERS_EDIT):
             logger.warning(f"Permission denied: admin {admin_id} cannot edit user {user_id}")
             return False

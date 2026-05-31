@@ -15,6 +15,7 @@ Zero Telegram dependencies — pure business logic.
 """
 
 import logging
+
 from db.context import db_context
 
 logger = logging.getLogger(__name__)

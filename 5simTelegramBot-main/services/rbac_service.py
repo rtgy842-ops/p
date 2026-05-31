@@ -14,9 +14,9 @@ Roles:
 Permissions are checked per-action with audit trail integration.
 """
 
-from enum import Enum
-from dataclasses import dataclass, field
 import logging
+from enum import Enum
+
 from config import BOT_CONFIG
 
 logger = logging.getLogger(__name__)

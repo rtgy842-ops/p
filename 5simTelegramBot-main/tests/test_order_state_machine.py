@@ -5,8 +5,7 @@ Tests every valid and invalid state transition.
 Ensures order lifecycle integrity.
 """
 
-import pytest
-from data.dto import OrderStatus, OrderDTO
+from data.dto import OrderDTO, OrderStatus
 
 
 class TestOrderStateMachine:

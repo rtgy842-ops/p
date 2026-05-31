@@ -5,8 +5,9 @@ Provides /health endpoint for monitoring.
 Checks: database, cache, SMS provider, payment gateway.
 """
 
-from flask import Blueprint, jsonify
 import logging
+
+from flask import Blueprint, jsonify
 
 logger = logging.getLogger(__name__)
 

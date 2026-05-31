@@ -3,12 +3,14 @@ tests/test_executable_wallet.py — Executable Wallet Integration Tests
 ─────────────────────────────────────────────────
 Tests that actually run against PostgreSQL.
 """
-import pytest
-import time
 import threading
-from services.wallet_service import WalletService
-from services.wallet_ledger import WalletLedger
+import time
+
+import pytest
+
 from db.context import db_context
+from services.wallet_ledger import WalletLedger
+from services.wallet_service import WalletService
 
 TEST_USER = 999999999
 
@@ -151,8 +153,6 @@ class TestWalletLedger:
 
 class TestPaymentIdempotency:
     def test_double_verify_does_not_double_credit(self):
-        from services.payment_service import PaymentService
-        from data.dto import PaymentGateway
         ref = f"test_ref_{int(time.time())}"
         with db_context('default', transactional=True) as db:
             db.execute(

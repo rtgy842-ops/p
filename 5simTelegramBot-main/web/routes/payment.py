@@ -5,7 +5,8 @@ web/routes/payment.py — Payment Verification Route
 """
 
 import logging
-from flask import Blueprint, request, render_template
+
+from flask import Blueprint, render_template, request
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +23,10 @@ def init(bot_instance):
 @payment_bp.route('/verify/<user_id>/<amount>')
 def verify_payment(user_id, amount):
     from compat.legacy_facade import (
-        payment_verify_zarinpal as compat_zarinpal_verify,
         add_balance as compat_add_balance,
+    )
+    from compat.legacy_facade import (
+        payment_verify_zarinpal as compat_zarinpal_verify,
     )
 
     try:

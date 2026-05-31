@@ -4,7 +4,6 @@ tests/test_enterprise_services.py — Enterprise Service Integration Tests
 Tests all newly created enterprise services.
 """
 
-import pytest
 import os
 import sys
 
@@ -55,24 +54,24 @@ class TestSubscriptionService:
     """Tests for the subscription tier system."""
 
     def test_all_tiers_defined(self):
-        from services.subscription_service import SubscriptionTier, TIER_CONFIG
+        from services.subscription_service import TIER_CONFIG, SubscriptionTier
         for tier in SubscriptionTier:
             assert tier in TIER_CONFIG, f"{tier} missing from TIER_CONFIG"
 
     def test_free_has_no_api_access(self):
-        from services.subscription_service import SubscriptionTier, TIER_CONFIG
+        from services.subscription_service import TIER_CONFIG, SubscriptionTier
         assert TIER_CONFIG[SubscriptionTier.FREE].api_access is False
 
     def test_enterprise_has_api_access(self):
-        from services.subscription_service import SubscriptionTier, TIER_CONFIG
+        from services.subscription_service import TIER_CONFIG, SubscriptionTier
         assert TIER_CONFIG[SubscriptionTier.ENTERPRISE].api_access is True
 
     def test_reseller_has_white_label(self):
-        from services.subscription_service import SubscriptionTier, TIER_CONFIG
+        from services.subscription_service import TIER_CONFIG, SubscriptionTier
         assert TIER_CONFIG[SubscriptionTier.RESELLER].white_label is True
 
     def test_discounts_increase_with_tier(self):
-        from services.subscription_service import SubscriptionTier, TIER_CONFIG
+        from services.subscription_service import TIER_CONFIG, SubscriptionTier
         free_disc = TIER_CONFIG[SubscriptionTier.FREE].price_discount_pct
         premium_disc = TIER_CONFIG[SubscriptionTier.PREMIUM].price_discount_pct
         enterprise_disc = TIER_CONFIG[SubscriptionTier.ENTERPRISE].price_discount_pct
@@ -113,22 +112,22 @@ class TestRBACService:
         assert len(list(Role)) == 6
 
     def test_super_admin_has_all_permissions(self):
-        from services.rbac_service import Role, Permission, ROLE_PERMISSIONS
+        from services.rbac_service import ROLE_PERMISSIONS, Permission, Role
         super_admin_perms = ROLE_PERMISSIONS[Role.SUPER_ADMIN]
         assert len(super_admin_perms) == len(list(Permission))
 
     def test_analyst_cannot_edit_users(self):
-        from services.rbac_service import Role, Permission, ROLE_PERMISSIONS
+        from services.rbac_service import ROLE_PERMISSIONS, Permission, Role
         analyst_perms = ROLE_PERMISSIONS[Role.ANALYST]
         assert Permission.USERS_EDIT not in analyst_perms
 
     def test_finance_can_manage_payments(self):
-        from services.rbac_service import Role, Permission, ROLE_PERMISSIONS
+        from services.rbac_service import ROLE_PERMISSIONS, Permission, Role
         finance_perms = ROLE_PERMISSIONS[Role.FINANCE]
         assert Permission.PAYMENTS_APPROVE in finance_perms
 
     def test_support_is_read_only(self):
-        from services.rbac_service import Role, ROLE_PERMISSIONS
+        from services.rbac_service import ROLE_PERMISSIONS, Role
         support_perms = ROLE_PERMISSIONS[Role.SUPPORT]
         for perm in support_perms:
             assert ':view' in perm.value, f"Support has write permission: {perm}"
@@ -150,7 +149,7 @@ class TestSmartRouter:
         assert strategy == RoutingStrategy.BEST_PRICE
 
     def test_set_strategy(self):
-        from services.smart_router import SmartRouter, RoutingStrategy
+        from services.smart_router import RoutingStrategy, SmartRouter
         router = SmartRouter()
         router.set_strategy(RoutingStrategy.HIGHEST_AVAILABILITY)
         assert router.get_strategy() == RoutingStrategy.HIGHEST_AVAILABILITY
@@ -285,7 +284,7 @@ class TestPaymentGateway:
         assert PaymentGateway.CARD_TO_CARD.value == 'card_to_card'
 
     def test_payment_result_dto(self):
-        from data.dto import PaymentResultDTO, PaymentGateway
+        from data.dto import PaymentGateway, PaymentResultDTO
         result = PaymentResultDTO(
             success=True,
             gateway=PaymentGateway.ZARINPAL,
@@ -301,7 +300,6 @@ class TestConfigSecurity:
 
     def test_no_hardcoded_secrets(self):
         """Verify config.py has no hardcoded API keys/tokens."""
-        import ast
         config_path = os.path.join(
             os.path.dirname(os.path.dirname(__file__)),
             'config.py'

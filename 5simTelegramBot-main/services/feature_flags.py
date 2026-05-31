@@ -18,10 +18,11 @@ Flags can be:
 - User-specific (for testing)
 """
 
-import logging
 import hashlib
+import logging
+
 from db.repositories.settings_repository import SettingsRepository
-from services.cache_service import CacheService, CacheKeys
+from services.cache_service import CacheKeys, CacheService
 
 logger = logging.getLogger(__name__)
 

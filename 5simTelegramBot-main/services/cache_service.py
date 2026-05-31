@@ -14,7 +14,6 @@ Prepares for Redis migration later.
 import logging
 import threading
 import time
-from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 

@@ -6,6 +6,7 @@ Thread-safe via ConnectionManager pool.
 """
 
 import logging
+
 from db.connection import ConnectionManager
 
 logger = logging.getLogger(__name__)

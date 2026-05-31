@@ -15,8 +15,8 @@ Metrics:
 - cache_hit_rate
 """
 
-import time
 import logging
+import time
 from functools import wraps
 from threading import Lock
 

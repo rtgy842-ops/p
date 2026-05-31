@@ -8,14 +8,15 @@ ZERO money operations — only display.
 """
 
 import logging
+
 from telebot import types
+
 from bot.client import telegram_client
-from bot.keyboards.main_keyboard import services_keyboard, countries_keyboard
-from services.sms_service import SMSService
-from services.settings_service import SettingsService
-from data.service_countries import SERVICE_COUNTRIES, _get_countries_for_service
+from bot.keyboards.main_keyboard import countries_keyboard, services_keyboard
+from data.service_countries import _get_countries_for_service
 from i18n import get_text
-from config import COUNTRY_ID_MAP, SERVICE_CODE_MAP
+from services.settings_service import SettingsService
+from services.sms_service import SMSService
 
 logger = logging.getLogger(__name__)
 

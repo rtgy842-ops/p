@@ -5,14 +5,15 @@ Replaces SQLite singleton with psycopg2 ThreadedConnectionPool.
 Every connection is thread-safe — no more "objects in different thread" errors.
 """
 
-import os
 import logging
-import psycopg2
-from psycopg2 import pool, extras
+import os
+
+from psycopg2 import pool
 
 logger = logging.getLogger(__name__)
 
 from config import DATABASE_URL as _CFG_DATABASE_URL
+
 DATABASE_URL = _CFG_DATABASE_URL or os.getenv('DATABASE_URL') or ''
 
 

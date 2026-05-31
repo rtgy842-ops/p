@@ -5,19 +5,22 @@ init_bot for all admin sub-modules.
 """
 
 import logging
+
 logger = logging.getLogger(__name__)
 
 
 def init(bot_instance):
     """Initialize all admin handler modules with the bot instance."""
-    from bot.handlers.admin import dashboard
-    from bot.handlers.admin import stats
-    from bot.handlers.admin import settings
-    from bot.handlers.admin import users
-    from bot.handlers.admin import broadcast
-    from bot.handlers.admin import transactions
-    from bot.handlers.admin import channels
-    from bot.handlers.admin import operators
+    from bot.handlers.admin import (
+        broadcast,
+        channels,
+        dashboard,
+        operators,
+        settings,
+        stats,
+        transactions,
+        users,
+    )
 
     dashboard.init(bot_instance)
     stats.init(bot_instance)

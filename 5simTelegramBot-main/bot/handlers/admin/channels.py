@@ -3,11 +3,13 @@ bot/handlers/admin/channels.py — Admin Channel Management
 """
 
 import logging
-from bot.router import router
-from i18n import get_text
-from config import BOT_CONFIG
-from admin_config import AdminConfig
+
 from telebot import types
+
+from admin_config import AdminConfig
+from bot.router import router
+from config import BOT_CONFIG
+from i18n import get_text
 
 logger = logging.getLogger(__name__)
 _bot = None
@@ -61,7 +63,7 @@ def process_channel_username(message):
         _admin_config.add_required_channel(username=username, display_name=chat_info.title, invite_link=invite_link)
         keyboard = types.InlineKeyboardMarkup(); keyboard.add(types.InlineKeyboardButton(get_text(user_id, 'navigation.back_to_channels'), callback_data="manage_channels"))
         _bot.reply_to(message, get_text(user_id, 'channels.channel_added', name=chat_info.title, username=username, link=invite_link), reply_markup=keyboard)
-    except Exception as e:
+    except Exception:
         keyboard = types.InlineKeyboardMarkup(row_width=1)
         keyboard.add(types.InlineKeyboardButton(get_text(user_id, 'navigation.retry'), callback_data="add_channel"), types.InlineKeyboardButton(get_text(user_id, 'navigation.back_to_channels'), callback_data="manage_channels"))
         _bot.reply_to(message, get_text(user_id, 'errors.api_error'), reply_markup=keyboard)

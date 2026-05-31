@@ -7,10 +7,11 @@ Allows customers to:
 - See list of referred users
 """
 import logging
+
 from telebot import types
+
 from bot.router import router
 from i18n import get_text
-from config import BOT_CONFIG
 
 logger = logging.getLogger(__name__)
 _bot = None

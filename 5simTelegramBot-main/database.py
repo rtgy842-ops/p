@@ -6,10 +6,11 @@ No SQLite code whatsoever.
 """
 
 import logging
+
 from db.connection import ConnectionManager
-from db.repositories.user_repository import UserRepository
-from db.repositories.transaction_repository import TransactionRepository
 from db.repositories.settings_repository import SettingsRepository
+from db.repositories.transaction_repository import TransactionRepository
+from db.repositories.user_repository import UserRepository
 
 logger = logging.getLogger(__name__)
 

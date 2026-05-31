@@ -6,11 +6,13 @@ THIN handler — delegates to i18n module + UserService.
 """
 
 import logging
+
 from telebot import types
+
 from bot.client import telegram_client
 from bot.keyboards.main_keyboard import main_menu_keyboard
+from i18n import get_all_languages, get_text, set_user_language
 from services.user_service import UserService
-from i18n import get_text, set_user_language, get_all_languages
 
 logger = logging.getLogger(__name__)
 

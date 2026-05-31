@@ -14,10 +14,9 @@ Architecture:
 
 import logging
 import time
-from typing import Optional
 
-from services.sms_service import BaseSMSProvider, SMSProviderResponse
 from db.context import db_context
+from services.sms_service import BaseSMSProvider
 
 logger = logging.getLogger(__name__)
 

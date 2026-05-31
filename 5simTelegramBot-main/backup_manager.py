@@ -6,11 +6,10 @@ Thread-safe via ConnectionManager pool.
 """
 
 import json
-import threading
-import time
 import logging
 import os
-from datetime import datetime
+import threading
+import time
 
 logger = logging.getLogger(__name__)
 

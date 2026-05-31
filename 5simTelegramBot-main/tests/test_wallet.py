@@ -5,11 +5,7 @@ CRITICAL: Tests for all balance operations.
 Tests: deposit, withdraw, refund, insufficient funds, double-spend prevention.
 """
 
-import pytest
-import sqlite3
 from db.repositories.user_repository import UserRepository
-from db.repositories.transaction_repository import TransactionRepository
-from db.context import db_context
 
 
 class TestWalletOperations:

@@ -6,8 +6,9 @@ No direct sqlite3 connections.
 """
 
 import logging
-from db.repositories.settings_repository import SettingsRepository
+
 from data.service_countries import get_all_service_countries
+from db.repositories.settings_repository import SettingsRepository
 
 logger = logging.getLogger(__name__)
 

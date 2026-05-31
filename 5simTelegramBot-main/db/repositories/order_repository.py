@@ -3,8 +3,9 @@ db/repositories/order_repository.py — Order Repository (PostgreSQL)
 """
 
 import logging
-from db.repositories.base import BaseRepository
+
 from db.context import db_context
+from db.repositories.base import BaseRepository
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +52,7 @@ class OrderRepository(BaseRepository):
             with db_context(self.db_name, transactional=True) as db:
                 db.execute('UPDATE orders SET status = %s WHERE id = %s', (status, order_id))
             return True
-        except Exception as e:
+        except Exception:
             return False
 
     def cancel_by_activation_id(self, activation_id: int) -> bool:
@@ -62,7 +63,7 @@ class OrderRepository(BaseRepository):
                     return False
                 db.execute("UPDATE orders SET status = 'CANCELED' WHERE activation_id = %s", (activation_id,))
                 return True
-        except Exception as e:
+        except Exception:
             return False
 
     def save_activation_code(self, order_id: int, code: str) -> bool:
@@ -70,7 +71,7 @@ class OrderRepository(BaseRepository):
             with db_context(self.db_name, transactional=True) as db:
                 db.execute('INSERT INTO activation_codes (order_id, code) VALUES (%s, %s)', (order_id, code))
             return True
-        except Exception as e:
+        except Exception:
             return False
 
     def sum_revenue(self, days: int = 0) -> int:

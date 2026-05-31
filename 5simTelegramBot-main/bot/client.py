@@ -17,8 +17,10 @@ Usage:
 """
 
 import logging
+
 import telebot
 from telebot import types
+
 from config import BOT_CONFIG
 
 logger = logging.getLogger(__name__)

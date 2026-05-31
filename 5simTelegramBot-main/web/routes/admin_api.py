@@ -5,9 +5,13 @@ All protected by @_require_admin. Uses enterprise repositories.
 No direct sqlite3.connect() calls.
 """
 
-import logging, os, json, time
-from flask import Blueprint, request, jsonify, render_template
+import json
+import logging
+import time
 from functools import wraps
+
+from flask import Blueprint, jsonify, render_template, request
+
 from config import BOT_CONFIG
 
 logger = logging.getLogger(__name__)
@@ -223,7 +227,8 @@ def test_api_key():
 @_require_admin
 def get_telegram_price(country):
     import requests
-    from config import COUNTRY_ID_MAP, SERVICE_CODE_MAP, HEROSMS_CONFIG
+
+    from config import COUNTRY_ID_MAP, HEROSMS_CONFIG, SERVICE_CODE_MAP
     country_id = COUNTRY_ID_MAP.get(country, country)
     service_code = SERVICE_CODE_MAP.get('telegram', 'tg')
     params = {'api_key': HEROSMS_CONFIG['api_key'], 'action': 'getPrices', 'country': country_id, 'service': service_code}

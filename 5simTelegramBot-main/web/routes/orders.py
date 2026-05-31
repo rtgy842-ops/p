@@ -3,7 +3,9 @@ web/routes/orders.py — User Orders (PostgreSQL)
 """
 
 import logging
+
 from flask import Blueprint, render_template
+
 from config import BOT_CONFIG
 
 logger = logging.getLogger(__name__)

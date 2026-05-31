@@ -18,10 +18,9 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 
-from services.sms_service import BaseSMSProvider, SMSProviderResponse, HeroSMSProvider
 from services.provider_registry import provider_registry
-from data.dto import PriceInfoDTO
 from services.settings_service import SettingsService
+from services.sms_service import BaseSMSProvider, HeroSMSProvider
 
 logger = logging.getLogger(__name__)
 
@@ -184,7 +183,7 @@ class SmartRouter:
                     provider=provider, price_usd=0, price_toman=999999,
                     available_count=0, operator=operator,
                     country=country, service=service,
-                    error=f'Country/service not available'
+                    error='Country/service not available'
                 )
 
             operators = price_data[country_id][service_code]

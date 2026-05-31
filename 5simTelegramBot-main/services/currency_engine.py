@@ -14,8 +14,6 @@ Features:
 """
 
 import logging
-from datetime import datetime
-from typing import Optional
 
 from db.context import db_context
 

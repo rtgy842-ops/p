@@ -6,6 +6,7 @@ All CREATE IF NOT EXISTS — idempotent, safe to re-run.
 
 import logging
 from datetime import datetime
+
 from db.connection import ConnectionManager
 from db.schema import ALL_TABLES, DEFAULT_SETTINGS, INDEXES
 

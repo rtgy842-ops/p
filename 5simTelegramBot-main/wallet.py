@@ -7,8 +7,9 @@ Backward-compatible API for legacy callers.
 """
 
 import logging
-from db.repositories.user_repository import UserRepository
+
 from db.repositories.transaction_repository import TransactionRepository
+from db.repositories.user_repository import UserRepository
 
 logger = logging.getLogger(__name__)
 

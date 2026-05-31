@@ -2,12 +2,14 @@
 """
 bot.py — Customer Bot (WEBHOOK mode — receives updates via POST /)
 """
-import logging, time, os, sys, json, threading
-from flask import Flask, request, render_template
+import logging
+import os
+import sys
+
 import telebot
-from telebot import types
+from flask import Flask, render_template, request
+
 from config import BOT_CONFIG
-from i18n import get_text, get_user_language, set_user_language, get_all_languages
 from routes.order_details import order_details_bp
 from web.health import health_bp
 
@@ -18,13 +20,16 @@ app.register_blueprint(order_details_bp); app.register_blueprint(health_bp)
 logging.basicConfig(stream=sys.stdout, format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 # ── WEBHOOK: Register the blueprint that handles POST / from Telegram ──
-from web.routes.webhook import webhook_bp, init as webhook_init
+from web.routes.webhook import init as webhook_init
+from web.routes.webhook import webhook_bp
+
 webhook_init(bot)
 app.register_blueprint(webhook_bp)
 logger.info("Webhook blueprint registered — POST / ready for Telegram updates")
 
+from bot.handlers import membership, menu, payment, purchase, referrals, start, subscriptions
 from bot.router import router
-from bot.handlers import menu, payment, membership, purchase, start, referrals, subscriptions
+
 menu.init(bot); payment.init(bot); membership.init(bot); purchase.init(bot); start.register_start_handler(bot)
 referrals.init(bot); subscriptions.init(bot)
 router.register_with_bot(bot)
@@ -38,8 +43,8 @@ logger.info(f"Handlers: {len(router._callback_handlers)} cb + {len(router._messa
 @app.route('/verify/<user_id>/<amount>')
 def verify_payment(user_id, amount):
     """Verify ZarinPal payment and credit user. Uses atomic PaymentService."""
-    from services.payment_service import PaymentService
     from data.dto import PaymentGateway
+    from services.payment_service import PaymentService
     a = request.args.get('Authority')
     s = request.args.get('Status')
     if s != 'OK':
@@ -65,7 +70,8 @@ def verify_payment(user_id, amount):
 if __name__ == '__main__':
     from database import setup_databases; setup_databases(); logger.info("DB ready")
     from db.migrations import MigrationManager; MigrationManager().migrate(); logger.info("Migrations done")
-    from services.provider_registry import provider_registry; from services.sms_service import HeroSMSProvider
+    from services.provider_registry import provider_registry
+    from services.sms_service import HeroSMSProvider
     provider_registry.register(HeroSMSProvider(), 'HeroSMS', priority=1); provider_registry.load_from_db()
 
     # Webhook is set EXTERNALLY — just run Flask to receive updates

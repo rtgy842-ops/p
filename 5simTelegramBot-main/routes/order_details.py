@@ -2,9 +2,9 @@
 routes/order_details.py — Order Details (PostgreSQL)
 """
 
-from flask import Blueprint, render_template, jsonify
 import logging
-import datetime
+
+from flask import Blueprint, render_template
 
 logger = logging.getLogger(__name__)
 order_details_bp = Blueprint('order_details_bp', __name__)

@@ -5,9 +5,10 @@ bot/handlers/admin/dashboard.py — Admin Dashboard Handler
 """
 
 import logging
+
 from bot.router import router
-from i18n import get_text
 from config import BOT_CONFIG
+from i18n import get_text
 
 logger = logging.getLogger(__name__)
 _bot = None

@@ -5,6 +5,7 @@ Receives Telegram updates and processes them.
 """
 
 import logging
+
 from flask import Blueprint, request
 
 logger = logging.getLogger(__name__)

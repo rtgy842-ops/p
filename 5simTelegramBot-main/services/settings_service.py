@@ -6,8 +6,9 @@ Uses SettingsRepository — no direct sqlite3 connections.
 """
 
 import logging
+
 from db.repositories.settings_repository import SettingsRepository
-from services.cache_service import CacheService, CacheKeys
+from services.cache_service import CacheKeys, CacheService
 
 logger = logging.getLogger(__name__)
 

@@ -5,10 +5,12 @@ Uses SettingsRepository — no direct sqlite3.
 """
 
 import logging
-from bot.router import router
-from i18n import get_text
-from config import BOT_CONFIG
+
 from telebot import types
+
+from bot.router import router
+from config import BOT_CONFIG
+from i18n import get_text
 
 logger = logging.getLogger(__name__)
 _bot = None

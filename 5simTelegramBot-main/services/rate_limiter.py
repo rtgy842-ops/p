@@ -12,8 +12,8 @@ Configuration:
 Keys: user_id, IP address, or combination.
 """
 import logging
-import time
 from datetime import datetime, timedelta
+
 from db.context import db_context
 
 logger = logging.getLogger(__name__)
@@ -118,7 +118,8 @@ def rate_limit(endpoint: str = 'default'):
     """Decorator to apply rate limiting to a Flask route."""
     def decorator(func):
         from functools import wraps
-        from flask import request, jsonify
+
+        from flask import jsonify, request
         @wraps(func)
         def wrapper(*args, **kwargs):
             # Use user_id if authenticated, else IP

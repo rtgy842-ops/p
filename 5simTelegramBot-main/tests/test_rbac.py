@@ -6,7 +6,8 @@ Ensures correct permission assignments.
 """
 
 import pytest
-from services.rbac_service import RBACService, Role, Permission
+
+from services.rbac_service import Permission, RBACService, Role
 
 
 class TestRBACPermissions:

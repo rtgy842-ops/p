@@ -7,6 +7,7 @@ Thread-safe via connection pool.
 """
 
 import logging
+
 from db.context import DatabaseContext
 
 logger = logging.getLogger(__name__)

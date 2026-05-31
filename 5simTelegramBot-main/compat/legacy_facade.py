@@ -7,12 +7,13 @@ Kept for backward-compatible function signatures.
 """
 
 import logging
-from services.wallet_service import WalletService
-from services.sms_service import SMSService
+
+from data.dto import PaymentGateway
+from db.repositories.order_repository import OrderRepository
 from services.order_service import OrderService
 from services.payment_service import PaymentService
-from db.repositories.order_repository import OrderRepository
-from data.dto import PaymentGateway
+from services.sms_service import SMSService
+from services.wallet_service import WalletService
 
 logger = logging.getLogger(__name__)
 

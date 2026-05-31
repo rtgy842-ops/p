@@ -6,10 +6,11 @@ THIN handler — delegates to UserService, uses keyboard builders.
 """
 
 import logging
+
 from bot.client import telegram_client
 from bot.keyboards.main_keyboard import main_menu_keyboard
-from services.user_service import UserService
 from i18n import get_text
+from services.user_service import UserService
 
 logger = logging.getLogger(__name__)
 

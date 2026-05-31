@@ -6,8 +6,9 @@ import os
 import sys
 from logging.config import fileConfig
 
-from alembic import context
 from sqlalchemy import engine_from_config, pool
+
+from alembic import context
 
 # Ensure project root is in path
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -32,10 +33,10 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # Import all models so Alembic can detect them
-from db.schema import ALL_TABLES
 
 # Target metadata — use a minimal MetaData for autogenerate
 from sqlalchemy import MetaData
+
 target_metadata = MetaData(schema='public')
 
 

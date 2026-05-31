@@ -7,9 +7,8 @@ No direct sqlite3 connections.
 """
 
 import json
-import os
 import logging
-from config import DB_CONFIG
+import os
 
 logger = logging.getLogger(__name__)
 

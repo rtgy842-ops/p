@@ -3,8 +3,9 @@ db/repositories/settings_repository.py — Settings Repository (PostgreSQL)
 """
 
 import logging
-from db.repositories.base import BaseRepository
+
 from db.context import db_context
+from db.repositories.base import BaseRepository
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +45,7 @@ class SettingsRepository(BaseRepository):
                 db.execute('DELETE FROM card_info')
                 db.execute('INSERT INTO card_info (card_number, card_holder) VALUES (%s, %s)', (card_number, card_holder))
             return True
-        except Exception as e:
+        except Exception:
             return False
 
     def get_required_channels(self):
@@ -57,7 +58,7 @@ class SettingsRepository(BaseRepository):
                     'INSERT INTO required_channels (username, display_name, invite_link) VALUES (%s, %s, %s) ON CONFLICT (username) DO UPDATE SET display_name = %s, invite_link = %s',
                     (username.replace('@', ''), display_name, invite_link, display_name, invite_link))
             return True
-        except Exception as e:
+        except Exception:
             return False
 
     def remove_channel(self, username: str) -> bool:
@@ -65,7 +66,7 @@ class SettingsRepository(BaseRepository):
             with db_context(self.db_name, transactional=True) as db:
                 db.execute('DELETE FROM required_channels WHERE username = %s', (username.replace('@', ''),))
             return True
-        except Exception as e:
+        except Exception:
             return False
 
     def get_operator(self, service: str, country: str):
@@ -78,7 +79,7 @@ class SettingsRepository(BaseRepository):
                     'INSERT INTO operator_settings (service, country, operator, country_name) VALUES (%s, %s, %s, %s) ON CONFLICT (service, country) DO UPDATE SET operator = %s, country_name = %s',
                     (service, country, operator, country_name, operator, country_name))
             return True
-        except Exception as e:
+        except Exception:
             return False
 
     def get_all_operators(self):

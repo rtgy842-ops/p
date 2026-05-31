@@ -5,9 +5,10 @@ All handlers registered via Router.
 """
 
 import logging
+
 from bot.router import router
-from i18n import get_text
 from config import BOT_CONFIG
+from i18n import get_text
 
 logger = logging.getLogger(__name__)
 _bot = None
@@ -21,8 +22,9 @@ def init(bot_instance):
 def handle_buy_number_with_params(call):
     """Phase 5: Atomic purchase — API first, then single DB tx for balance+order."""
     from telebot import types
-    from services.wallet_service import WalletService
+
     from db.context import db_context
+    from services.wallet_service import WalletService
 
     try:
         user_id = call.from_user.id
@@ -127,6 +129,7 @@ def handle_buy_number_entry(call):
 @router.callback('check_balance')
 def handle_check_balance(call):
     from telebot import types
+
     from compat.legacy_facade import get_balance
     user_id = call.from_user.id
     balance = get_balance(user_id)
@@ -220,7 +223,7 @@ def handle_no_operator(call):
 # ── get_code_ ─────────────────────────────────────────────
 @router.callback('get_code_')
 def handle_get_code(call):
-    from compat.legacy_facade import sms_check_status, order_update_status, order_save_code
+    from compat.legacy_facade import order_save_code, order_update_status, sms_check_status
     try:
         user_id = call.from_user.id
         order_id = call.data.split('_')[2]
@@ -249,8 +252,9 @@ def handle_get_code(call):
 # ── cancel_order_ ─────────────────────────────────────────
 @router.callback('cancel_order_')
 def handle_cancel_order(call):
-    from compat.legacy_facade import sms_cancel_number, order_cancel, get_balance
     from telebot import types
+
+    from compat.legacy_facade import get_balance, order_cancel, sms_cancel_number
     try:
         user_id = call.from_user.id
         order_id = int(call.data.split('_')[2])

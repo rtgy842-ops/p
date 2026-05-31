@@ -4,8 +4,9 @@ db/repositories/user_repository.py — User Repository (PostgreSQL)
 """
 
 import logging
-from db.repositories.base import BaseRepository
+
 from db.context import db_context
+from db.repositories.base import BaseRepository
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +116,7 @@ class UserRepository(BaseRepository):
             with db_context(self.db_name, transactional=True) as db:
                 db.execute('UPDATE users SET is_blocked = %s WHERE user_id = %s', (1 if blocked else 0, user_id))
             return True
-        except Exception as e:
+        except Exception:
             return False
 
     def save_phone(self, user_id: int, phone: str) -> bool:
@@ -123,5 +124,5 @@ class UserRepository(BaseRepository):
             with db_context(self.db_name, transactional=True) as db:
                 db.execute('UPDATE users SET phone = %s WHERE user_id = %s', (phone, user_id))
             return True
-        except Exception as e:
+        except Exception:
             return False

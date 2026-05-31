@@ -12,7 +12,8 @@ Metrics:
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
+
 from db.connection import ConnectionManager
 from db.context import db_context
 

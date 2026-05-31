@@ -7,7 +7,6 @@ This file exists only for backward compatibility.
 """
 
 import logging
-from bot.router import router
 
 logger = logging.getLogger(__name__)
 _bot = None

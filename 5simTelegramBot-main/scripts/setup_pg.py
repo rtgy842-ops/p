@@ -1,11 +1,13 @@
-import psycopg2, sys, os
+import os
+
+import psycopg2
 
 LOG = os.path.join(os.path.dirname(__file__), '..', 'setup_log.txt')
 
 with open(LOG, 'w') as f:
     f.write('STARTING PostgreSQL setup\n')
     f.flush()
-    
+
     pw_list = ['admin', 'password', 'postgres', 'root', '1234']
     for pw in pw_list:
         try:

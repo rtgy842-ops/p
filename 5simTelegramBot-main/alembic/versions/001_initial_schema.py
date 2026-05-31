@@ -7,8 +7,8 @@ Create Date: 2026-05-31
 Initial schema — all core and enterprise tables.
 """
 from typing import Sequence, Union
+
 from alembic import op
-import sqlalchemy as sa
 
 # revision identifiers
 revision: str = '001_initial'

@@ -10,10 +10,7 @@ Multi-layered fraud detection:
 """
 
 import logging
-import hashlib
-import time
-from datetime import datetime, timedelta
-from typing import Optional
+from datetime import datetime
 
 from db.context import db_context
 
@@ -266,7 +263,6 @@ class AntiFraudEngine:
                          action_taken: str) -> None:
         """Persist fraud detection event to database."""
         try:
-            import json
             with db_context('default', transactional=True) as db:
                 db.execute(
                     """INSERT INTO fraud_log (user_id, event_type, risk_score, details, ip_address, device_fingerprint, action_taken)

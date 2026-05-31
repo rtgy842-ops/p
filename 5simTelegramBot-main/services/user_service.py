@@ -6,6 +6,7 @@ Zero Telegram dependencies — pure business logic.
 """
 
 import logging
+
 from data.dto import UserDTO
 from db.repositories.user_repository import UserRepository
 

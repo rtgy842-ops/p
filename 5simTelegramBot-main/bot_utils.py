@@ -5,9 +5,11 @@ Uses ConnectionManager for database access.
 """
 
 import logging
-import requests
 import time
+
+import requests
 from dotenv import load_dotenv
+
 from config import BOT_CONFIG
 
 load_dotenv()

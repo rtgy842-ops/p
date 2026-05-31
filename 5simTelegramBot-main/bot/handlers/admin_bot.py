@@ -9,9 +9,8 @@ Security: If ADMIN_BOT_TOKEN is not set, admin bot does NOT start.
 """
 
 import logging
+
 from bot.router import router
-from i18n import get_text
-from config import BOT_CONFIG
 
 logger = logging.getLogger(__name__)
 _bot = None
@@ -32,7 +31,7 @@ def admin_start(message):
     from telebot import types
 
     uid = message.from_user.id
-    from services.rbac_service import rbac, Role, Permission
+    from services.rbac_service import Permission, rbac
 
     if not rbac.has_permission(uid, Permission.SETTINGS_VIEW):
         _bot.reply_to(message, "⛔ You do not have admin access.")
@@ -73,6 +72,7 @@ def admin_start(message):
 @router.callback('admin:dashboard')
 def admin_dashboard(call):
     from telebot import types
+
     from services.admin_service import AdminService
     from services.analytics_service import analytics
 
@@ -121,8 +121,9 @@ def admin_dashboard(call):
 @router.callback('admin:users')
 def admin_users(call):
     from telebot import types
-    from services.user_service import UserService
+
     from services.subscription_service import subscriptions
+    from services.user_service import UserService
 
     user_svc = UserService()
     recent = user_svc.list_recent(20)
@@ -159,6 +160,7 @@ def admin_user_search_prompt(call):
 
 def _process_user_search(message):
     from telebot import types
+
     from services.user_service import UserService
 
     try:
@@ -279,6 +281,7 @@ def _process_toggle_ban(message):
 @router.callback('admin:orders')
 def admin_orders(call):
     from telebot import types
+
     from db.context import db_context
 
     with db_context('default', transactional=False) as db:
@@ -306,6 +309,7 @@ def admin_orders(call):
 @router.callback('admin:payments')
 def admin_payments(call):
     from telebot import types
+
     from db.context import db_context
 
     with db_context('default', transactional=False) as db:
@@ -334,6 +338,7 @@ def admin_payments(call):
 @router.callback('admin:stats')
 def admin_stats(call):
     from telebot import types
+
     from services.analytics_service import analytics
 
     a = analytics.get_dashboard()
@@ -366,6 +371,7 @@ def admin_stats(call):
 @router.callback('admin:settings')
 def admin_settings(call):
     from telebot import types
+
     from services.admin_service import AdminService
 
     admin = AdminService()
@@ -452,6 +458,7 @@ def admin_toggle_lock(call):
 @router.callback('admin:providers')
 def admin_providers(call):
     from telebot import types
+
     from services.provider_registry import provider_registry
 
     health = provider_registry.get_all_health()
@@ -502,6 +509,7 @@ def admin_health_check(call):
 @router.callback('admin:audit')
 def admin_audit(call):
     from telebot import types
+
     from services.admin_service import AdminService
 
     admin = AdminService()
@@ -565,18 +573,19 @@ def _process_broadcast(message):
 @router.callback('admin:catalog')
 def admin_catalog(call):
     from telebot import types
+
     from services.catalog_manager import catalog as cat
 
     stats = cat.get_stats()
     countries = cat.get_active_countries()
 
     lines = [
-        f"🏪 **Catalog Management**\n",
+        "🏪 **Catalog Management**\n",
         f"🌍 Active Countries: **{len(countries)}**",
         f"📡 Active Services: **{stats['active_services']}**",
         f"💲 Price Rules: **{stats['active_prices']}**",
         f"🔌 Active Providers: **{stats.get('active_providers', 0)}**\n",
-        f"**Active Countries:**"
+        "**Active Countries:**"
     ]
     for c in countries[:15]:
         lines.append(f"✅ `{c['code']}` — {c['name']} (order: {c['order']})")
@@ -644,6 +653,7 @@ def _process_toggle_service(message):
 @router.callback('admin:cat_prices')
 def admin_cat_prices(call):
     from telebot import types
+
     from services.catalog_manager import catalog as cat
 
     active_prices = cat.get_active_prices()
@@ -680,8 +690,8 @@ def admin_cat_set_price_prompt(call):
 
 
 def _process_set_price(message):
-    from services.catalog_manager import catalog as cat
     from db.context import db_context
+    from services.catalog_manager import catalog as cat
     parts = message.text.strip().split()
     if len(parts) < 3:
         _bot.reply_to(message, "❌ Format: COUNTRY SERVICE PROFIT% [FIXED]")
@@ -723,6 +733,7 @@ def _process_set_price(message):
 @router.callback('admin:cat_services')
 def admin_cat_services(call):
     from telebot import types
+
     from services.catalog_manager import catalog as cat
 
     services = cat.get_all_services()
@@ -748,6 +759,7 @@ def admin_cat_services(call):
 @router.callback('admin:currencies')
 def admin_currencies(call):
     from telebot import types
+
     from services.currency_engine import currency_engine
 
     currencies = currency_engine.get_all_currencies()
@@ -773,7 +785,8 @@ def admin_currencies(call):
 @router.callback('admin:subscriptions')
 def admin_subscriptions(call):
     from telebot import types
-    from services.subscription_service import subscriptions, SubscriptionTier
+
+    from services.subscription_service import subscriptions
 
     tiers = subscriptions.get_all_tiers()
     lines = ["🎫 **Subscription Tiers**\n"]
@@ -817,7 +830,7 @@ def _prompt_set_tier(call, tier_name):
 
 
 def _process_set_tier(message, tier_name):
-    from services.subscription_service import subscriptions, SubscriptionTier
+    from services.subscription_service import SubscriptionTier, subscriptions
     try:
         uid = int(message.text.strip())
         tier = SubscriptionTier(tier_name)
@@ -837,6 +850,7 @@ def _process_set_tier(message, tier_name):
 @router.callback('admin:referrals')
 def admin_referrals(call):
     from telebot import types
+
     from services.referral_service import referrals
 
     lines = ["🔗 **Referral System**\n",
@@ -857,8 +871,9 @@ def admin_referrals(call):
 
 @router.callback('admin:web_panel')
 def admin_web_panel(call):
-    from telebot import types
     import os
+
+    from telebot import types
     token = os.getenv('ADMIN_API_TOKEN', '')
     webhook_url = os.getenv('WEBHOOK_URL', 'http://localhost:5000')
 
@@ -880,5 +895,5 @@ def admin_web_panel(call):
         call.message.chat.id, call.message.message_id,
         reply_markup=keyboard, parse_mode='Markdown'
     )
-  
-# Admin Payment Approval Callbacks (migrated from customer bot) 
+
+# Admin Payment Approval Callbacks (migrated from customer bot)

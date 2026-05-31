@@ -4,10 +4,9 @@ services/referral_service.py — Anti-Fraud Referral System
 Referral program with DB-persisted tracking and fraud prevention.
 """
 
-import logging
 import hashlib
+import logging
 import time
-from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +103,6 @@ class ReferralService:
 
                 # IP-based abuse check
                 if ip_address:
-                    from db.context import db_context as db2
                     # Check for same-IP patterns (anti-fraud)
                     recent = db.fetchone(
                         "SELECT COUNT(*) as cnt FROM fraud_log WHERE ip_address = %s AND created_at > CURRENT_TIMESTAMP - INTERVAL '1 hour'",

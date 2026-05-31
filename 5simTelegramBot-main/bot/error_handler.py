@@ -7,6 +7,7 @@ Prevents single handler failure from crashing the entire bot.
 
 import logging
 import traceback
+
 from bot.client import telegram_client
 
 logger = logging.getLogger(__name__)

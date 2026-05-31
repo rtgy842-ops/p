@@ -12,13 +12,15 @@ Architecture:
 """
 
 import logging
-import requests
 from abc import ABC, abstractmethod
-from config import PAYMENT_CONFIG, BOT_CONFIG, DB_CONFIG
-from data.dto import PaymentResultDTO, PaymentGateway
-from db.repositories.user_repository import UserRepository
-from db.repositories.transaction_repository import TransactionRepository
+
+import requests
+
+from config import PAYMENT_CONFIG
+from data.dto import PaymentGateway, PaymentResultDTO
 from db.repositories.card_payment_repository import CardPaymentRepository
+from db.repositories.transaction_repository import TransactionRepository
+from db.repositories.user_repository import UserRepository
 
 logger = logging.getLogger(__name__)
 

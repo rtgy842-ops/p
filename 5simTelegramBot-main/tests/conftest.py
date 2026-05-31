@@ -6,11 +6,11 @@ All tests use TEMPORARY databases — NEVER production data.
 """
 
 import os
-import pytest
+import shutil
 import sqlite3
 import tempfile
-import shutil
 
+import pytest
 
 # ── Isolated test database ─────────────────────────────────────
 

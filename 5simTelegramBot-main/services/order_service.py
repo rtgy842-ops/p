@@ -12,7 +12,8 @@ Zero Telegram dependencies — pure business logic.
 """
 
 import logging
-from data.dto import OrderDTO, OrderStatus, PurchaseResultDTO
+
+from data.dto import OrderDTO, OrderStatus
 from db.repositories.order_repository import OrderRepository
 from services.wallet_service import WalletService
 

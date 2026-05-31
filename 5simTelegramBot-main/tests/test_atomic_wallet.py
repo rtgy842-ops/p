@@ -7,15 +7,12 @@ Tests the Phase 0+8 fixes:
 - Idempotent payment callbacks
 - Balance cannot go negative
 """
-import pytest
-import threading
-import time
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
-from services.wallet_service import WalletService
+import pytest
+
 from services.payment_service import PaymentService, ZarinPalGateway
-from services.wallet_ledger import WalletLedger
-from data.dto import PaymentGateway, PaymentResultDTO
+from services.wallet_service import WalletService
 
 
 class TestAtomicWallet:
