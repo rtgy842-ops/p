@@ -17,7 +17,8 @@ from web.health import health_bp
 logger = logging.getLogger(__name__)
 bot = telebot.TeleBot(BOT_CONFIG['token'])
 app = Flask(__name__, static_folder='static', template_folder='templates')
-app.register_blueprint(order_details_bp); app.register_blueprint(health_bp)
+app.register_blueprint(order_details_bp)
+app.register_blueprint(health_bp)
 logging.basicConfig(stream=sys.stdout, format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 # ── WEBHOOK: Register the blueprint that handles POST / from Telegram ──
@@ -31,8 +32,13 @@ logger.info("Webhook blueprint registered — POST / ready for Telegram updates"
 from bot.handlers import membership, menu, payment, purchase, referrals, start, subscriptions
 from bot.router import router
 
-menu.init(bot); payment.init(bot); membership.init(bot); purchase.init(bot); start.register_start_handler(bot)
-referrals.init(bot); subscriptions.init(bot)
+menu.init(bot)
+payment.init(bot)
+membership.init(bot)
+purchase.init(bot)
+start.register_start_handler(bot)
+referrals.init(bot)
+subscriptions.init(bot)
 router.register_with_bot(bot)
 logger.info(f"Handlers: {len(router._callback_handlers)} cb + {len(router._message_handlers)} cmd")
 
@@ -94,11 +100,16 @@ def verify_payment(user_id, amount):
         return render_template('payment_result.html', False, message="Internal error")
 
 if __name__ == '__main__':
-    from database import setup_databases; setup_databases(); logger.info("DB ready")
-    from db.migrations import MigrationManager; MigrationManager().migrate(); logger.info("Migrations done")
+    from database import setup_databases
+    setup_databases()
+    logger.info("DB ready")
+    from db.migrations import MigrationManager
+    MigrationManager().migrate()
+    logger.info("Migrations done")
     from services.provider_registry import provider_registry
     from services.sms_service import HeroSMSProvider
-    provider_registry.register(HeroSMSProvider(), 'HeroSMS', priority=1); provider_registry.load_from_db()
+    provider_registry.register(HeroSMSProvider(), 'HeroSMS', priority=1)
+    provider_registry.load_from_db()
 
     # Webhook is set EXTERNALLY — just run Flask to receive updates
     logger.info("Customer Bot LIVE (webhook mode — no polling)")

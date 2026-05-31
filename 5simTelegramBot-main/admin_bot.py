@@ -25,11 +25,14 @@ app = Flask(__name__)
 from bot.handlers.admin_bot import init as admin_bot_init
 from bot.router import router
 
-admin_bot_init(bot); router.register_with_bot(bot)
+admin_bot_init(bot)
+router.register_with_bot(bot)
 logger.info(f"Admin handlers: {len(router._callback_handlers)} cb + {len(router._message_handlers)} cmd")
 
-from web.health import health_bp; app.register_blueprint(health_bp)
-from web.routes.admin_panel import admin_panel_bp; app.register_blueprint(admin_panel_bp)
+from web.health import health_bp
+app.register_blueprint(health_bp)
+from web.routes.admin_panel import admin_panel_bp
+app.register_blueprint(admin_panel_bp)
 
 # ── WEBHOOK: Register the blueprint that handles POST / from Telegram ──
 from web.routes.webhook import init as webhook_init
@@ -40,18 +43,26 @@ app.register_blueprint(webhook_bp)
 logger.info("Webhook blueprint registered — POST / ready for Telegram admin updates")
 
 @app.route('/')
-def root(): return 'Admin Bot is running'
+def root():
+    return 'Admin Bot is running'
+
 @app.route('/admin/start')
 def link():
-    t=os.getenv('ADMIN_API_TOKEN',''); w=os.getenv('WEBSITE_URL',os.getenv('WEBHOOK_URL',''))
+    t = os.getenv('ADMIN_API_TOKEN', '')
+    w = os.getenv('WEBSITE_URL', os.getenv('WEBHOOK_URL', ''))
     return f'<a href="{w}/admin?token={t}">🔗 Admin Panel</a>' if t else 'Not configured'
 
 if __name__ == '__main__':
-    from database import setup_databases; setup_databases(); logger.info("DB ready")
-    from db.migrations import MigrationManager; MigrationManager().migrate(); logger.info("Migrations done")
+    from database import setup_databases
+    setup_databases()
+    logger.info("DB ready")
+    from db.migrations import MigrationManager
+    MigrationManager().migrate()
+    logger.info("Migrations done")
     from services.provider_registry import provider_registry
     from services.sms_service import HeroSMSProvider
-    provider_registry.register(HeroSMSProvider(), 'HeroSMS', priority=1); provider_registry.load_from_db()
+    provider_registry.register(HeroSMSProvider(), 'HeroSMS', priority=1)
+    provider_registry.load_from_db()
 
     # Webhook is set EXTERNALLY — just run Flask to receive updates
     logger.info("Admin Bot LIVE (webhook mode — no polling)")

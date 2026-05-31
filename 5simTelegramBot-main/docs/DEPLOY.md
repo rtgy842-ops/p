@@ -1,197 +1,386 @@
-# NumGenius — Enterprise SaaS Platform
-## Deployment Guide v3.0
+# 🚀 تعليمات النشر الكاملة — NumGenius Enterprise SaaS
+## من الصفر إلى الإنتاج على VPS
 
 ---
 
-## 1. Prerequisites
+## 1. متطلبات الخادم
 
-- Docker 24+ & Docker Compose v2+
-- PostgreSQL 16 (or use Docker container)
-- Redis 7 (or use Docker container)
-- Python 3.11+
-- Two Telegram Bot Tokens (Customer + Admin)
-- SSL certificate for webhook (production)
+```
+OS: Ubuntu 22.04 LTS أو Debian 12
+RAM: 2GB minimum (4GB recommended)
+CPU: 2 cores minimum
+Disk: 20GB minimum
+```
 
 ---
 
-## 2. Quick Start (Development)
+## 2. الاتصال بالخادم
 
 ```bash
-# Clone and enter project
-cd 5simTelegramBot-main/5simTelegramBot-main
+ssh root@YOUR_VPS_IP
+```
 
-# Create .env from example
+---
+
+## 3. تحديث النظام وتثبيت المتطلبات الأساسية
+
+```bash
+apt update && apt upgrade -y
+
+# تثبيت Docker + Docker Compose + Git + Nginx + Certbot
+apt install -y \
+    docker.io docker-compose-v2 \
+    git nginx certbot python3-certbot-nginx \
+    curl wget ufw
+```
+
+---
+
+## 4. إعداد جدار الحماية (Firewall)
+
+```bash
+ufw allow 22    # SSH
+ufw allow 80    # HTTP
+ufw allow 443   # HTTPS
+ufw enable
+```
+
+---
+
+## 5. تحميل المشروع
+
+```bash
+cd /opt
+git clone https://github.com/YOUR_USERNAME/5simTelegramBot-main.git numgenius
+cd numgenius
+```
+
+---
+
+## 6. إعداد ملف البيئة `.env`
+
+```bash
 cp .env.example .env
+nano .env
+```
 
-# Edit .env with your values:
-# - BOT_TOKEN (customer bot)
-# - ADMIN_BOT_TOKEN (admin bot — separate!)
-# - HEROSMS_API_KEY
-# - ZARINPAL_MERCHANT
-# - ADMIN_API_TOKEN
-# - SECRET_KEY
+**املأ القيم الحقيقية:**
 
-# Install dependencies
-pip install -r requirements.txt
+```env
+# ── بيئة التطبيق ───────────────────────────────────
+APP_ENV=production
 
-# Set up PostgreSQL (or use Docker)
-docker compose up -d postgres redis
+# ── بوت العملاء (Telegram Bot Token) ───────────────
+BOT_TOKEN=1234567890:ABCdefGHIjklMNOpqrsTUVwxyz
+WEBHOOK_URL=https://api.yourdomain.com
+WEBSITE_URL=https://app.yourdomain.com
+WEBHOOK_SECRET_TOKEN=YOUR_RANDOM_64_CHAR_SECRET_TOKEN_HERE
 
-# Start customer bot
-BOT_TOKEN=your_token python bot.py
+# ── بوت الإدارة (يجب أن يكون مختلفاً عن بوت العملاء) ──
+ADMIN_BOT_TOKEN=9876543210:ZYXwvuTSRqpONMlkjIHGfedCBA
+ADMIN_IDS=YOUR_TELEGRAM_USER_ID
+ADMIN_WEBHOOK_URL=https://admin.yourdomain.com
 
-# Start admin bot (in another terminal)
-BOT_TOKEN=your_admin_token python admin_bot.py
+# ── HeroSMS API ────────────────────────────────────
+HEROSMS_API_KEY=YOUR_HEROSMS_API_KEY
+HEROSMS_API_URL=https://hero-sms.com/stubs/handler_api.php
+
+# ── ZarinPal ───────────────────────────────────────
+ZARINPAL_MERCHANT=YOUR_ZARINPAL_MERCHANT_ID
+ZARINPAL_SANDBOX=false
+
+# ── Navasan (نرخ ارز) ──────────────────────────────
+NAVASAN_API_KEY=YOUR_NAVASAN_API_KEY
+
+# ── قاعدة البيانات PostgreSQL ──────────────────────
+DATABASE_URL=postgresql://smsbot:STRONG_PASSWORD_HERE@postgres:5432/smsbot
+POSTGRES_USER=smsbot
+POSTGRES_PASSWORD=STRONG_PASSWORD_HERE
+POSTGRES_DB=smsbot
+
+# ── Redis ──────────────────────────────────────────
+REDIS_PASSWORD=STRONG_REDIS_PASSWORD_HERE
+CELERY_BROKER_URL=redis://:STRONG_REDIS_PASSWORD_HERE@redis:6379/0
+CELERY_RESULT_BACKEND=redis://:STRONG_REDIS_PASSWORD_HERE@redis:6379/0
+
+# ── Flask ──────────────────────────────────────────
+FLASK_HOST=0.0.0.0
+FLASK_PORT=5000
+FLASK_DEBUG=false
+SECRET_KEY=GENERATE_A_RANDOM_64_CHAR_STRING_HERE_USE_PASSWORD_MANAGER
+
+# ── لوحة الإدارة ──────────────────────────────────
+ADMIN_API_TOKEN=GENERATE_ANOTHER_RANDOM_64_CHAR_TOKEN_HERE
+
+# ── التسجيل ───────────────────────────────────────
+LOG_LEVEL=INFO
+
+# ── النسخ الاحتياطي ───────────────────────────────
+BACKUP_INTERVAL_SECONDS=300
+BACKUP_FILE=data/users_backup.json
+BACKUP_DIR=data/backups
+```
+
+**توليد كلمات السر العشوائية:**
+
+```bash
+# توليد SECRET_KEY و ADMIN_API_TOKEN
+python3 -c "import secrets; print('SECRET_KEY=' + secrets.token_hex(32))"
+python3 -c "import secrets; print('ADMIN_API_TOKEN=' + secrets.token_hex(32))"
+python3 -c "import secrets; print('REDIS_PASSWORD=' + secrets.token_hex(16))"
+python3 -c "import secrets; print('POSTGRES_PASSWORD=' + secrets.token_hex(16))"
+python3 -c "import secrets; print('WEBHOOK_SECRET_TOKEN=' + secrets.token_hex(32))"
 ```
 
 ---
 
-## 3. Production Deployment (Docker)
-
-### 3.1 Configure Environment
+## 7. إنشاء مجلدات البيانات
 
 ```bash
-# .env — production values
-APP_ENV=production
-BOT_TOKEN=1234567890:AAxxxxxxxxxxxxxxxxxxxxxxxxxx
-ADMIN_BOT_TOKEN=9876543210:BBxxxxxxxxxxxxxxxxxxxxxxxxxx
-ADMIN_IDS=YOUR_TELEGRAM_USER_ID
-WEBHOOK_URL=https://yourdomain.com
-WEBSITE_URL=https://yourdomain.com
-HEROSMS_API_KEY=your_herosms_key
-ZARINPAL_MERCHANT=your_merchant_id
-ZARINPAL_SANDBOX=false
-NAVASAN_API_KEY=your_navasan_key
-DATABASE_URL=postgresql://smsbot:StrongPassword123!@postgres:5432/smsbot
-CELERY_BROKER_URL=redis://redis:6379/0
-CELERY_RESULT_BACKEND=redis://redis:6379/0
-SECRET_KEY=$(openssl rand -hex 32)
-ADMIN_API_TOKEN=$(openssl rand -hex 24)
-LOG_LEVEL=INFO
+mkdir -p data/backups logs nginx/ssl
+chmod 755 data logs
 ```
 
-### 3.2 Start Full Stack
+---
+
+## 8. تشغيل المشروع
 
 ```bash
-# Full stack (all services)
-docker compose --profile full up -d
+# تشغيل كل الخدمات (PostgreSQL + Redis + Customer Bot + Admin Bot + Worker + Beat)
+docker compose --profile full up -d --build
+```
 
-# Check all services running
+**التأكد من أن كل شيء يعمل:**
+
+```bash
+# فحص الحاويات
 docker compose ps
 
-# View logs
-docker compose logs -f customer_bot
-docker compose logs -f admin_bot
+# فحص السجلات
+docker compose logs customer_bot --tail 20
+docker compose logs admin_bot --tail 20
+docker compose logs worker --tail 20
+
+# فحص صحة قاعدة البيانات
+docker compose exec postgres pg_isready -U smsbot -d smsbot
 ```
 
-### 3.3 Individual Service Profiles
+---
+
+## 9. إعداد Nginx + SSL
+
+### أ. توجيه DNS
+
+قبل المتابعة، تأكد من أن النطاقات تشير إلى IP الخادم:
+
+```
+api.yourdomain.com    → YOUR_VPS_IP
+admin.yourdomain.com  → YOUR_VPS_IP
+app.yourdomain.com    → YOUR_VPS_IP
+```
+
+### ب. نسخ إعدادات Nginx
 
 ```bash
-# Customer Bot only
-docker compose --profile customer up -d
-
-# Admin Bot only
-docker compose --profile admin up -d
-
-# Workers only (Celery + Beat)
-docker compose --profile worker up -d
+cp nginx/numgenius.conf /etc/nginx/sites-available/numgenius
+nano /etc/nginx/sites-available/numgenius
 ```
 
----
+**عدّل اسم النطاق في ملف nginx:**
 
-## 4. Database Migration
-
-Migrations run automatically on startup via `MigrationManager`. The system is idempotent — safe to re-run.
-
-Current migration versions:
-- v0: Core tables (users, transactions, orders, settings)
-- v1: Default settings
-- v2: Performance indexes
-- v3: Default currency (USD)
-- v4: Default provider (HeroSMS)
-- v5: Catalog services
-- v6: Catalog countries
-
----
-
-## 5. Admin Panel Access
-
-1. Start the admin bot
-2. Send `/start` to the admin bot on Telegram
-3. Click "🖥️ Web Panel" to open the secure admin dashboard
-4. The admin panel is at `https://yourdomain.com/admin?token=ADMIN_API_TOKEN`
-
----
-
-## 6. Architecture
-
-```
-┌─────────────┐  ┌─────────────┐  ┌──────────────┐
-│ Customer Bot │  │  Admin Bot  │  │ Web Panel    │
-│ (bot.py)     │  │(admin_bot)  │  │ (/admin)     │
-│ Separate tok │  │ Separate tok│  │ Secure token │
-└──────┬───────┘  └──────┬──────┘  └──────┬───────┘
-       │                 │                │
-       └────────┬────────┴────────────────┘
-                │
-     ┌──────────▼──────────┐
-     │   Service Layer     │
-     │   18 Services       │
-     └──────────┬──────────┘
-                │
-     ┌──────────▼──────────┐
-     │   PostgreSQL 16     │
-     │   20+ tables        │
-     └─────────────────────┘
-```
-
----
-
-## 7. Monitoring
-
-- Provider health checks: every 60s (Celery Beat)
-- Price sync: every 30s
-- Full provider sync: hourly
-- Fraud log cleanup: daily at 3 AM
-- Database backup: daily at 2 AM
-
-View provider health: Admin Bot → Providers → Health Check
-
----
-
-## 8. Security Checklist
-
-- [x] All secrets in .env (never committed)
-- [x] Separate bot tokens for customer/admin
-- [x] RBAC with 6 roles
-- [x] Audit log for ALL admin operations
-- [x] Anti-fraud with risk scoring
-- [x] DB transactions prevent race conditions
-- [x] Web admin panel requires token
-
----
-
-## 9. Testing
+استبدل كل `api.abunumapp.com` و `admin.abunumapp.com` و `app.abunumapp.com` بنطاقاتك الفعلية.
 
 ```bash
-# Run all tests
-pytest tests/ -v
+# تفعيل الموقع
+ln -s /etc/nginx/sites-available/numgenius /etc/nginx/sites-enabled/
+rm /etc/nginx/sites-enabled/default
 
-# Run specific test file
-pytest tests/test_enterprise_services.py -v
+# فحص الإعدادات
+nginx -t
 
-# Run with coverage
-pytest tests/ --cov=. --cov-report=term-missing
+# إعادة تشغيل Nginx
+systemctl restart nginx
+```
+
+### ج. شهادة SSL من Let's Encrypt
+
+```bash
+# الحصول على الشهادة لجميع النطاقات
+certbot --nginx -d api.yourdomain.com -d admin.yourdomain.com -d app.yourdomain.com
+
+# التجديد التلقائي
+certbot renew --dry-run
 ```
 
 ---
 
-## 10. Troubleshooting
+## 10. إعداد Webhook لتليجرام
 
-| Issue | Solution |
-|-------|----------|
-| Admin bot doesn't start | Check `ADMIN_BOT_TOKEN` is set |
-| Web panel unauthorized | Check `ADMIN_API_TOKEN` in .env |
-| Database connection failed | Check `DATABASE_URL` and postgres container |
-| Provider sync failing | Check `HEROSMS_API_KEY` validity |
-| Balance not updating | Check transaction logs in DB |
+```bash
+# بوت العملاء
+curl -X POST "https://api.telegram.org/bot${BOT_TOKEN}/setWebhook" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://api.yourdomain.com/",
+    "secret_token": "YOUR_WEBHOOK_SECRET_TOKEN"
+  }'
+
+# بوت الإدارة
+curl -X POST "https://api.telegram.org/bot${ADMIN_BOT_TOKEN}/setWebhook" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://admin.yourdomain.com/",
+    "secret_token": "YOUR_WEBHOOK_SECRET_TOKEN"
+  }'
+
+# التحقق من حالة webhook
+curl "https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo"
+curl "https://api.telegram.org/bot${ADMIN_BOT_TOKEN}/getWebhookInfo"
+```
+
+---
+
+## 11. فحص النظام بالكامل
+
+```bash
+# فحص صحة التطبيق
+curl https://api.yourdomain.com/ping
+curl https://api.yourdomain.com/health
+
+curl https://admin.yourdomain.com/ping
+curl https://admin.yourdomain.com/health
+
+# فحص السجلات
+docker compose logs --tail 50
+```
+
+---
+
+## 12. أوامر الصيانة اليومية
+
+```bash
+# عرض حالة الحاويات
+docker compose ps
+
+# عرض السجلات
+docker compose logs --tail 100
+
+# إعادة تشغيل خدمة معينة
+docker compose restart customer_bot
+docker compose restart admin_bot
+
+# إعادة تشغيل الكل
+docker compose restart
+
+# تحديث المشروع (عند وجود تحديثات)
+cd /opt/numgenius
+git pull
+docker compose --profile full up -d --build
+
+# النسخ الاحتياطي لقاعدة البيانات
+docker compose exec postgres pg_dump -U smsbot smsbot > backups/db_$(date +%Y%m%d_%H%M%S).sql
+
+# استعادة النسخ الاحتياطي
+docker compose exec -T postgres psql -U smsbot smsbot < backups/db_BACKUP_FILE.sql
+```
+
+---
+
+## 13. المشاكل الشائعة وحلولها
+
+### المشكلة: Webhook لا يستقبل التحديثات
+
+```bash
+# تأكد من أن الشهادة صالحة
+curl -I https://api.yourdomain.com/
+
+# أعد تعيين webhook
+curl -X POST "https://api.telegram.org/bot${BOT_TOKEN}/deleteWebhook"
+curl -X POST "https://api.telegram.org/bot${BOT_TOKEN}/setWebhook" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://api.yourdomain.com/", "secret_token": "YOUR_WEBHOOK_SECRET_TOKEN"}'
+```
+
+### المشكلة: حاوية PostgreSQL لا تعمل
+
+```bash
+# فحص السجلات
+docker compose logs postgres
+
+# إعادة تهيئة قاعدة البيانات (سيؤدي لفقدان البيانات)
+docker compose down -v
+docker compose --profile full up -d
+```
+
+### المشكلة: خطأ CSRF في المدفوعات
+
+تأكد من تعيين `WEBHOOK_SECRET_TOKEN` في `.env` بنفس القيمة المستخدمة في إعداد webhook.
+
+---
+
+## 14. المتغيرات المطلوبة للتشغيل
+
+| المتغير | مطلوب؟ | الوصف |
+|---------|--------|-------|
+| BOT_TOKEN | ✅ | Token بوت تليجرام للعملاء |
+| ADMIN_BOT_TOKEN | ✅ | Token بوت تليجرام للإدارة |
+| ADMIN_IDS | ✅ | معرفات مسؤولي النظام |
+| HEROSMS_API_KEY | ✅ | مفتاح HeroSMS API |
+| ZARINPAL_MERCHANT | ✅ | معرف التاجر في زرينبال |
+| DATABASE_URL | ✅ | رابط PostgreSQL |
+| POSTGRES_PASSWORD | ✅ | كلمة مرور PostgreSQL |
+| REDIS_PASSWORD | ✅ | كلمة مرور Redis |
+| SECRET_KEY | ✅ | مفتاح Flask السري |
+| ADMIN_API_TOKEN | ✅ | رمز لوحة الإدارة |
+| WEBHOOK_SECRET_TOKEN | ✅ | رمز حماية webhook |
+| WEBHOOK_URL | ✅ | رابط النطاق الرئيسي |
+| WEBSITE_URL | ✅ | رابط موقع الويب |
+| NAVASAN_API_KEY | ⚠️ | مفتاح API نوسان (لأسعار العملات) |
+
+---
+
+## 15. هيكل المشروع النهائي على الخادم
+
+```
+/opt/numgenius/
+├── .env                     # المتغيرات البيئية (سري)
+├── docker-compose.yml       # إعدادات Docker
+├── Dockerfile               # بناء الحاوية
+├── docker-entrypoint.sh     # نقطة دخول الحاوية
+├── bot.py                   # بوت العملاء
+├── admin_bot.py             # بوت الإدارة
+├── config.py                # الإعدادات
+├── services/                # طبقة الخدمات
+├── db/                      # طبقة قاعدة البيانات
+├── bot/                     # معالجات البوت
+├── web/                     # مسارات الويب
+├── alembic/                 # ترحيل قاعدة البيانات
+├── nginx/                   # إعدادات Nginx
+├── locales/                 # ملفات الترجمة
+├── data/                    # بيانات التطبيق
+├── logs/                    # السجلات
+└── docs/                    # التقارير والتوثيق
+```
+
+---
+
+## 16. قائمة فحص النشر النهائية
+
+- [ ] تثبيت Docker + Docker Compose + Nginx + Certbot
+- [ ] استنساخ المشروع إلى `/opt/numgenius`
+- [ ] إنشاء ملف `.env` بكل القيم الحقيقية
+- [ ] توليد كلمات سر عشوائية لكل الخدمات
+- [ ] إعداد DNS للإشارة إلى VPS
+- [ ] نسخ وتعديل إعدادات Nginx (`nginx/numgenius.conf`)
+- [ ] تشغيل `docker compose --profile full up -d --build`
+- [ ] التحقق من `docker compose ps` (كل الخدمات Up)
+- [ ] الحصول على شهادة SSL: `certbot --nginx`
+- [ ] إعداد Webhook لتليجرام
+- [ ] فحص `/ping` و `/health` عبر HTTPS
+- [ ] اختبار بوت تليجرام (`/start`)
+- [ ] اختبار بوت الإدارة (`/start`)
+- [ ] إعداد نسخ احتياطي تلقائي (cron job)
+
+---
+
+**تم — النظام جاهز للإنتاج 🚀**
