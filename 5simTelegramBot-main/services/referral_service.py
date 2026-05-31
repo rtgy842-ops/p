@@ -239,5 +239,49 @@ class ReferralService:
             return False
 
 
+    def get_or_create_code(self, user_id: int) -> str:
+        """Get existing referral code or create one."""
+        try:
+            from db.context import db_context
+            with db_context('default', transactional=False) as db:
+                row = db.fetchone(
+                    "SELECT code FROM referral_codes WHERE user_id = %s AND is_active = 1",
+                    (user_id,))
+                if row:
+                    code = row[0] if not isinstance(row, dict) else row.get('code')
+                    if code:
+                        return code
+            # Create new code
+            return self.generate_code(user_id)
+        except Exception as e:
+            logger.error(f"get_or_create_code error: {e}")
+            return ''
+
+    def get_referred_users(self, user_id: int) -> list[dict]:
+        """Get list of users referred by this user."""
+        try:
+            from db.context import db_context
+            with db_context('default', transactional=False) as db:
+                rows = db.fetchall(
+                    """SELECT r.referred_id, r.status, r.total_earned, r.created_at,
+                       u.first_name
+                       FROM referrals r
+                       LEFT JOIN users u ON r.referred_id = u.user_id
+                       WHERE r.referrer_id = %s
+                       ORDER BY r.created_at DESC""",
+                    (user_id,))
+                return [
+                    {'referred_id': row[0] if not isinstance(row, dict) else row.get('referred_id'),
+                     'status': row[1] if not isinstance(row, dict) else row.get('status'),
+                     'total_earned': row[2] if not isinstance(row, dict) else row.get('total_earned', 0),
+                     'created_at': str(row[3]) if not isinstance(row, dict) else str(row.get('created_at', '')),
+                     'name': row[4] if not isinstance(row, dict) else row.get('first_name', '')}
+                    for row in rows
+                ]
+        except Exception as e:
+            logger.error(f"get_referred_users error: {e}")
+            return []
+
+
 # ── Global instance ────────────────────────────────────────────
 referrals = ReferralService()

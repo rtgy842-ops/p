@@ -24,29 +24,16 @@ app.register_blueprint(webhook_bp)
 logger.info("Webhook blueprint registered — POST / ready for Telegram updates")
 
 from bot.router import router
-from bot.handlers import menu, payment, membership, purchase
-menu.init(bot); payment.init(bot); membership.init(bot); purchase.init(bot)
+from bot.handlers import menu, payment, membership, purchase, start, referrals, subscriptions
+menu.init(bot); payment.init(bot); membership.init(bot); purchase.init(bot); start.register_start_handler(bot)
+referrals.init(bot); subscriptions.init(bot)
 router.register_with_bot(bot)
 logger.info(f"Handlers: {len(router._callback_handlers)} cb + {len(router._message_handlers)} cmd")
 
-@bot.message_handler(commands=['start'])
-def start_handler(message):
-    from db.repositories.user_repository import UserRepository
-    UserRepository().create_if_not_exists(message.from_user.id, 'fa')
-    from bot.keyboards.main_keyboard import main_menu_keyboard
-    bot.send_message(message.chat.id, get_text(message.from_user.id, 'welcome'), reply_markup=main_menu_keyboard(message.from_user.id))
-
-@bot.message_handler(commands=['language'])
-def language_handler(message):
-    uid=message.from_user.id; kb=types.InlineKeyboardMarkup(row_width=1)
-    for lang in get_all_languages(): kb.add(types.InlineKeyboardButton(lang['name'], callback_data=f"setlang_{lang['code']}"))
-    kb.add(types.InlineKeyboardButton(get_text(uid,'navigation.back_to_main'), callback_data="back_to_main"))
-    bot.send_message(uid, get_text(uid,'language.select_title'), reply_markup=kb)
-
-@bot.callback_query_handler(func=lambda c: c.data == 'back_to_main')
-def back_main_cb(c):
-    from bot.keyboards.main_keyboard import main_menu_keyboard
-    bot.edit_message_text(get_text(c.from_user.id,'welcome_back'), c.message.chat.id, c.message.message_id, reply_markup=main_menu_keyboard(c.from_user.id))
+# /start registered via bot/handlers/start.py
+# /language registered via bot/handlers/language.py
+# back_to_main registered via bot/handlers/purchase.py
+# No duplicate handlers needed here.
 
 @app.route('/verify/<user_id>/<amount>')
 def verify_payment(user_id, amount):
