@@ -164,6 +164,6 @@ class TestPaymentIdempotency:
                     "INSERT INTO transactions (user_id, amount, type, description, ref_id) "
                     "VALUES (%s, %s, %s, %s, %s)",
                     (TEST_USER, 100, 'deposit', 'duplicate', ref))
-                assert False, "Should have raised duplicate key"
+                raise AssertionError("Should have raised duplicate key")
             except Exception:
                 pass  # Expected: duplicate ref_id rejected

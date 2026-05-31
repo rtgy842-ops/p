@@ -104,7 +104,8 @@ class MigrationManager:
                     cursor.execute(
                         "INSERT INTO _migrations VALUES (%s, %s, %s, %s)",
                         (version, description, 0, datetime.now().isoformat()))
-                except: pass
+                except Exception:
+                    pass
                 return False
 
         logger.info(f"Migration complete. Version {self.get_current_version()}")

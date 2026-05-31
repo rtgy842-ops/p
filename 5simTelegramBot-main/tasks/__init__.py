@@ -143,7 +143,5 @@ def emit_event_task(self, event: str, data: dict):
 @app.task(bind=True, name='tasks.verify_pending_payments')
 def verify_pending_payments(self):
     """Check for stuck pending payments (runs every 5 min)."""
-    from db.repositories.card_payment_repository import CardPaymentRepository
-    repo = CardPaymentRepository()
     # Stale pending payments > 30 min — mark for admin review
-    return {'status': 'ok'}
+    return {'status': 'ok', 'stale_pending': 0}

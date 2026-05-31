@@ -42,18 +42,18 @@ def upgrade() -> None:
         END $$;
     """)
 
-    # ── Add default subscription tiers (raw psycopg2 to avoid %% conflicts) ──
-    connection = op.get_bind().engine.raw_connection()
-    try:
-        cursor = connection.cursor()
-        cursor.execute("""
-            INSERT INTO settings (key, value) VALUES
-                ('subscription_tiers', %s)
-            ON CONFLICT (key) DO NOTHING
-        """, ('{"free":{"max_daily":5,"discount_pct":0,"api_access":false},"basic":{"max_daily":20,"discount_pct":5,"api_access":false},"premium":{"max_daily":50,"discount_pct":10,"api_access":false},"reseller":{"max_daily":200,"discount_pct":20,"api_access":true},"business":{"max_daily":500,"discount_pct":25,"api_access":true},"enterprise":{"max_daily":1000,"discount_pct":30,"api_access":true}}',))
-        connection.commit()
-    finally:
-        connection.close()
+    # ── Add default subscription tiers (raw SQL via connection to avoid %% conflict) ──
+    _conn = op.get_bind()
+    _conn.exec_driver_sql(
+        "INSERT INTO settings (key, value) VALUES "
+        "('subscription_tiers', '{\"free\":{\"max_daily\":5,\"discount_pct\":0,\"api_access\":false},"
+        "\"basic\":{\"max_daily\":20,\"discount_pct\":5,\"api_access\":false},"
+        "\"premium\":{\"max_daily\":50,\"discount_pct\":10,\"api_access\":false},"
+        "\"reseller\":{\"max_daily\":200,\"discount_pct\":20,\"api_access\":true},"
+        "\"business\":{\"max_daily\":500,\"discount_pct\":25,\"api_access\":true},"
+        "\"enterprise\":{\"max_daily\":1000,\"discount_pct\":30,\"api_access\":true}}') "
+        "ON CONFLICT (key) DO NOTHING"
+    )
 
     # ── Seed default currency (USD) ──
     op.execute("""
@@ -88,16 +88,11 @@ def upgrade() -> None:
         ('yahoo', 'Yahoo', 'other', 15),
     ]
     for code, name, cat, order in services:
-        connection = op.get_bind().engine.raw_connection()
-        try:
-            cursor = connection.cursor()
-            cursor.execute(
-                """INSERT INTO catalog_services (service_code, service_name, category, is_active, display_order)
-                   VALUES (%s, %s, %s, 1, %s) ON CONFLICT (service_code) DO NOTHING""",
-                (code, name, cat, order))
-            connection.commit()
-        finally:
-            connection.close()
+        op.get_bind().exec_driver_sql(
+            f"INSERT INTO catalog_services (service_code, service_name, category, is_active, display_order) "
+            f"VALUES ('{code}', '{name}', '{cat}', 1, {order}) "
+            f"ON CONFLICT (service_code) DO NOTHING"
+        )
 
     # ── Performance Indexes ──
     indexes = [

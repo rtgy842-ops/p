@@ -72,7 +72,8 @@ class DatabaseContext:
         if self._cursor and self._cursor.description:
             try:
                 return self._cursor.fetchone()[0]
-            except: pass
+            except Exception:
+                pass
         return 0
 
     @property

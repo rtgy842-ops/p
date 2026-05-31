@@ -103,7 +103,7 @@ class ProviderSyncService:
         try:
             from data.service_countries import get_all_service_countries
             catalog_entries = get_all_service_countries()
-            for svc, country, _, operator in catalog_entries:
+            for svc, country, _, _ in catalog_entries:
                 try:
                     price_result = provider.get_prices(svc, country)
                     if price_result.success and price_result.raw_response:
@@ -149,7 +149,7 @@ class ProviderSyncService:
         result = {'success': True, 'prices': 0}
         try:
             from data.service_countries import get_all_service_countries
-            for svc, country, _, operator in get_all_service_countries():
+            for svc, country, _, _ in get_all_service_countries():
                 price_result = provider.get_prices(svc, country)
                 if price_result.success and price_result.raw_response:
                     price_data = json.loads(price_result.raw_response)

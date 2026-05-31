@@ -77,9 +77,8 @@ class TestAtomicPayment:
 
     def test_zarinpal_sandbox_mode(self):
         """Sandbox mode uses sandbox URLs."""
-        gateway = ZarinPalGateway()
         # In sandbox mode, URLs should point to sandbox
-        pass
+        assert ZarinPalGateway().sandbox is True
 
 
 class TestWalletLedger:

@@ -30,7 +30,8 @@ def handle_manage_channels(call):
             try:
                 chat_info = _bot.get_chat(f"@{channel[0]}")
                 text += f"{i}. {chat_info.title}\n🆔 @{channel[0]}\n🔗 {channel[2]}\n➖➖➖➖➖➖➖➖\n"
-            except: text += f"{i}. @{channel[0]} ({get_text(user_id, 'channels.unreachable')})\n➖➖➖➖➖➖➖➖\n"
+            except Exception:
+                text += f"{i}. @{channel[0]} ({get_text(user_id, 'channels.unreachable')})\n➖➖➖➖➖➖➖➖\n"
     else: text += get_text(user_id, 'channels.no_channels')
     keyboard = types.InlineKeyboardMarkup(row_width=2)
     keyboard.add(types.InlineKeyboardButton(get_text(user_id, 'channels.add_channel'), callback_data="add_channel"), types.InlineKeyboardButton(get_text(user_id, 'channels.remove_channel'), callback_data="remove_channel"))
@@ -59,7 +60,8 @@ def process_channel_username(message):
             keyboard.add(types.InlineKeyboardButton(get_text(user_id, 'channels.add_bot'), url="https://t.me/HajNumber_Bot"), types.InlineKeyboardButton(get_text(user_id, 'navigation.retry'), callback_data="add_channel"), types.InlineKeyboardButton(get_text(user_id, 'navigation.back_to_channels'), callback_data="manage_channels"))
             _bot.reply_to(message, get_text(user_id, 'channels.bot_not_admin'), reply_markup=keyboard); return
         try: invite_link = _bot.export_chat_invite_link(f"@{username}")
-        except: invite_link = f"https://t.me/{username}"
+        except Exception:
+            invite_link = f"https://t.me/{username}"
         _admin_config.add_required_channel(username=username, display_name=chat_info.title, invite_link=invite_link)
         keyboard = types.InlineKeyboardMarkup(); keyboard.add(types.InlineKeyboardButton(get_text(user_id, 'navigation.back_to_channels'), callback_data="manage_channels"))
         _bot.reply_to(message, get_text(user_id, 'channels.channel_added', name=chat_info.title, username=username, link=invite_link), reply_markup=keyboard)
@@ -95,7 +97,8 @@ def handle_check_channels_status(call):
             bot_member = _bot.get_chat_member(f"@{channel[0]}", _bot.get_me().id); chat_info = _bot.get_chat(f"@{channel[0]}")
             if bot_member.status in ['administrator', 'creator']: text += f"✅ {chat_info.title}\n🆔 @{channel[0]}\n{get_text(user_id, 'channels.status_bot_admin')}\n"
             else: text += f"⚠️ {chat_info.title}\n🆔 @{channel[0]}\n{get_text(user_id, 'channels.status_bot_not_admin')}\n"; all_ok = False
-        except: text += f"❌ @{channel[0]}\n{get_text(user_id, 'channels.status_error')}\n"; all_ok = False
+        except Exception:
+            text += f"❌ @{channel[0]}\n{get_text(user_id, 'channels.status_error')}\n"; all_ok = False
         text += "➖➖➖➖➖➖➖➖\n"
     text += f"\n{get_text(user_id, 'channels.all_ok') if all_ok else get_text(user_id, 'channels.some_issues')}"
     keyboard = types.InlineKeyboardMarkup(); keyboard.add(types.InlineKeyboardButton(get_text(user_id, 'navigation.back_to_channels'), callback_data="manage_channels"))

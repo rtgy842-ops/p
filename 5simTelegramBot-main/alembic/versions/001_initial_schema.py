@@ -122,13 +122,6 @@ def upgrade() -> None:
         )
     """)
 
-    op.execute("""
-        CREATE TABLE IF NOT EXISTS alembic_version (
-            version_num VARCHAR(32) NOT NULL,
-            CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num)
-        )
-    """)
-
     # ── Enterprise Tables ─────────────────────────────────
     op.execute("""
         CREATE TABLE IF NOT EXISTS subscriptions (
@@ -345,7 +338,7 @@ def downgrade() -> None:
         'admin_roles', 'referral_codes', 'referrals', 'subscriptions',
         'activation_codes', 'operator_settings', 'required_channels',
         'card_info', 'settings', 'card_payments', 'orders', 'transactions',
-        'users', 'alembic_version',
+        'users',
     ]
     for table in tables:
         op.execute(f"DROP TABLE IF EXISTS {table} CASCADE")
