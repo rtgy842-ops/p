@@ -19,34 +19,37 @@ def init(bot_instance):
 # ── buy_number_ (with parameters) MUST come before buy_number ──
 @router.callback('buy_number_')
 def handle_buy_number_with_params(call):
+    """Phase 5: Atomic purchase — API first, then single DB tx for balance+order."""
     from telebot import types
-    from compat.legacy_facade import get_balance, deduct_balance, sms_buy_number, order_save
-    from data.service_countries import get_countries_for_service, get_country_name as _get_country_name
-    from operator_config import OperatorConfig
+    from services.wallet_service import WalletService
+    from db.context import db_context
 
     try:
         user_id = call.from_user.id
-        balance = get_balance(user_id)
         parts = call.data.split('_')
         service = parts[2]; country = parts[3]; operator = parts[4]
 
-        country_name = _get_country_name(service, country)
-        if not country_name:
-            country_name = get_text(user_id, f'countries.{country}')
+        country_name = country
+        try:
+            from data.service_countries import get_country_name as _get_country_name
+            cn = _get_country_name(service, country)
+            if cn: country_name = cn
+        except Exception: pass
 
-        from compat.legacy_facade import sms_get_prices
-        price_data = sms_get_prices(service)
+        # ── Step 1: Calculate price ──
         price_toman = 50000
-        if price_data:
-            from db.repositories.settings_repository import SettingsRepository
-            repo = SettingsRepository()
-            usd_rate = float(repo.get('usd_rate') or 0)
-            profit = float(repo.get('profit_percentage') or 30)
-            if country in price_data and service in price_data[country]:
-                ops = price_data[country][service]
-                if operator in ops and ops[operator]['count'] > 0:
-                    price_toman = round(ops[operator]['cost'] * usd_rate * (1 + profit/100))
+        try:
+            from services.catalog_manager import catalog as cat
+            pricing = cat.get_pricing(country, service)
+            if pricing:
+                from db.repositories.settings_repository import SettingsRepository
+                usd_rate = float(SettingsRepository().get('usd_rate') or 50000)
+                price_toman = round(pricing[0]['final_price'] * usd_rate)
+        except Exception:
+            pass
 
+        # ── Step 2: Check balance ──
+        balance = WalletService.get_balance(user_id)
         if balance < price_toman:
             deficit = price_toman - balance
             keyboard = types.InlineKeyboardMarkup(row_width=1)
@@ -56,40 +59,54 @@ def handle_buy_number_with_params(call):
                                    call.message.chat.id, call.message.message_id, reply_markup=keyboard)
             return
 
+        # ── Step 3: Call SMS provider FIRST (before any DB mutation) ──
         _bot.edit_message_text(get_text(user_id, 'purchase.buying', service=service, country=country_name),
                                call.message.chat.id, call.message.message_id)
 
+        from compat.legacy_facade import sms_buy_number
         result = sms_buy_number(country, operator, service)
-        if result and isinstance(result, dict) and result.get('success') and 'data' in result:
-            order_data = result['data']
-            deduct_balance(user_id, price_toman, f'Buy {service} in {country}')
-
-            order_info = {
-                'user_id': user_id, 'activation_id': order_data['order_id'],
-                'service': service, 'country': country, 'operator': operator,
-                'phone': order_data['phone'], 'price': price_toman,
-                'status': order_data.get('status', 'PENDING').lower()
-            }
-            order_id = order_save(order_info)
-
-            if order_id:
-                details_url = f"{BOT_CONFIG['website_url']}/number_details/{order_id}"
-                keyboard = types.InlineKeyboardMarkup(row_width=1)
-                keyboard.add(
-                    types.InlineKeyboardButton(get_text(user_id, 'purchase.get_code'), callback_data=f"get_code_{order_data['order_id']}"),
-                    types.InlineKeyboardButton(get_text(user_id, 'purchase.cancel_order'), callback_data=f"cancel_order_{order_data['order_id']}"),
-                    types.InlineKeyboardButton(get_text(user_id, 'purchase.view_details_web'), url=details_url),
-                    types.InlineKeyboardButton(get_text(user_id, 'navigation.back_to_services'), callback_data="back_to_services"))
-                _bot.edit_message_text(
-                    get_text(user_id, 'purchase.success', service=service, country=country_name,
-                             phone=order_data['phone'], operator=operator, price=price_toman),
-                    call.message.chat.id, call.message.message_id, reply_markup=keyboard)
-            else:
-                _bot.edit_message_text(get_text(user_id, 'purchase.save_error'),
-                                       call.message.chat.id, call.message.message_id)
-        else:
+        if not (result and isinstance(result, dict) and result.get('success') and 'data' in result):
             error_msg = (result or {}).get('error', 'Unknown error') if isinstance(result, dict) else 'Unknown error'
             _bot.edit_message_text(get_text(user_id, 'purchase.buy_error', error=error_msg),
+                                   call.message.chat.id, call.message.message_id)
+            return
+
+        order_data = result['data']
+        activation_id = order_data['order_id']
+        phone_number = order_data['phone']
+
+        # ── Step 4: ATOMIC DB — lock row + deduct + create order ──
+        wallet = WalletService()
+        new_balance = wallet.withdraw(user_id, price_toman,
+                                      f'Buy {service} in {country}')
+        if new_balance is None:
+            _bot.edit_message_text("❌ Balance deduction failed.",
+                                   call.message.chat.id, call.message.message_id)
+            return
+
+        with db_context('default', transactional=True) as db:
+            db.execute(
+                """INSERT INTO orders (user_id, activation_id, service, country, operator, phone, price, status)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, 'PENDING') RETURNING id""",
+                (user_id, activation_id, service, country, operator, phone_number, price_toman))
+            order_row = db.fetchone("SELECT lastval()")
+            order_id = order_row[0] if order_row else None
+
+        if order_id:
+            details_url = f"{BOT_CONFIG['website_url']}/number_details/{order_id}"
+            keyboard = types.InlineKeyboardMarkup(row_width=1)
+            keyboard.add(
+                types.InlineKeyboardButton(get_text(user_id, 'purchase.get_code'), callback_data=f"get_code_{activation_id}"),
+                types.InlineKeyboardButton(get_text(user_id, 'purchase.cancel_order'), callback_data=f"cancel_order_{activation_id}"),
+                types.InlineKeyboardButton(get_text(user_id, 'purchase.view_details_web'), url=details_url),
+                types.InlineKeyboardButton(get_text(user_id, 'navigation.back_to_services'), callback_data="back_to_services"))
+            _bot.edit_message_text(
+                get_text(user_id, 'purchase.success', service=service, country=country_name,
+                         phone=phone_number, operator=operator, price=price_toman),
+                call.message.chat.id, call.message.message_id, reply_markup=keyboard)
+        else:
+            wallet.refund(user_id, price_toman, f'Refund: failed order save {service}/{country}')
+            _bot.edit_message_text(get_text(user_id, 'purchase.save_error'),
                                    call.message.chat.id, call.message.message_id)
     except Exception as e:
         logger.error(f"Error in buy_number_: {e}", exc_info=True)

@@ -65,7 +65,7 @@ PAYMENT_CONFIG = {
 }
 
 # ── Database ─────────────────────────────────────────────
-DATABASE_URL = os.getenv('DATABASE_URL', 'postgresql://smsbot:smsbot_secret@localhost:5432/smsbot')
+DATABASE_URL = _env('DATABASE_URL')
 DB_CONFIG = {'users_db': 'default', 'admin_db': 'default'}
 
 # ── Redis / Celery ───────────────────────────────────────

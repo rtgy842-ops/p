@@ -1,0 +1,173 @@
+# NumGenius CI/CD Pipeline — GitHub Actions
+# Runs on every push and pull request to main/staging
+
+name: NumGenius CI/CD
+
+on:
+  push:
+    branches: [main, staging, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  PYTHON_VERSION: '3.11'
+  DOCKER_REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # ── Lint & Type Check ──────────────────────────────
+  lint:
+    name: Lint & Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pylint mypy
+      - name: Run pylint
+        run: pylint --errors-only services/ bot/ db/ || true
+      - name: Run mypy
+        run: mypy --ignore-missing-imports services/ || true
+
+  # ── Unit & Integration Tests ───────────────────────
+  test:
+    name: Tests (PostgreSQL)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: smsbot
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: smsbot_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 3s
+          --health-retries 3
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov pytest-xdist
+
+      - name: Run Alembic migrations
+        env:
+          DATABASE_URL: postgresql://smsbot:test_password@localhost:5432/smsbot_test
+        run: |
+          pip install alembic
+          alembic upgrade head
+
+      - name: Run tests with coverage
+        env:
+          DATABASE_URL: postgresql://smsbot:test_password@localhost:5432/smsbot_test
+          CELERY_BROKER_URL: redis://localhost:6379/0
+          BOT_TOKEN: test_token
+          ADMIN_BOT_TOKEN: test_admin_token
+          SECRET_KEY: test_secret_key_64chars
+          APP_ENV: development
+        run: |
+          pytest --maxfail=1 --disable-warnings -q \
+            --cov=services --cov=db --cov=bot \
+            --cov-report=term-missing \
+            tests/
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: .coverage
+
+  # ── Build & Push Docker Images ─────────────────────
+  build:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.DOCKER_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ── Deploy to Staging ──────────────────────────────
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [build]
+    if: github.ref == 'refs/heads/staging'
+    environment: staging
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.STAGING_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            cd /opt/numgenius
+            docker compose pull
+            docker compose up -d --force-recreate
+            docker compose exec -T customer_bot alembic upgrade head
+
+  # ── Deploy to Production ───────────────────────────
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [build]
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.PROD_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            cd /opt/numgenius
+            docker compose pull
+            docker compose up -d --force-recreate
+            docker compose exec -T customer_bot alembic upgrade head
+            docker compose exec -T postgres pg_dump -U smsbot smsbot > /backups/$(date +%Y%m%d_%H%M).sql

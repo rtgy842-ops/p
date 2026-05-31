@@ -264,8 +264,32 @@ class PaymentService:
                           user_id: int, amount: int) -> PaymentResultDTO:
         """
         Verify payment AND credit user balance atomically.
-        This ensures payment verification and balance update are coupled.
+        
+        IDEMPOTENT: Checks if authority already exists in transactions
+        (double-callback protection). If already processed, returns success
+        without modifying balance.
         """
+        from db.context import db_context
+
+        # ── IDEMPOTENCY GUARD: Check if this authority was already processed ──
+        try:
+            with db_context('default', transactional=False) as db:
+                existing = db.fetchone(
+                    "SELECT 1 FROM transactions WHERE ref_id = %s AND type = 'deposit'",
+                    (authority,))
+                if existing:
+                    logger.info(
+                        f"Idempotent: authority {authority} already processed — skipping")
+                    return PaymentResultDTO(
+                        success=True,
+                        gateway=gateway,
+                        ref_id=authority,
+                        error_message=None,
+                    )
+        except Exception as e:
+            logger.warning(f"Idempotency check failed: {e}")
+
+        # ── Verify with gateway ──
         gw = self.get_gateway(gateway)
         if gw is None:
             return PaymentResultDTO(
@@ -278,33 +302,62 @@ class PaymentService:
         if not result.success:
             return result
 
-        # Credit user balance
-        new_balance = self._user_repo.add_balance(user_id, amount)
-        if new_balance is None:
-            logger.error(f"Failed to credit balance after successful payment: user={user_id}, amount={amount}")
+        # ── ATOMIC: Lock row + update balance + record transaction ──
+        ref_id = result.ref_id or result.payment_id or authority
+        try:
+            with db_context('default', transactional=True) as db:
+                # Second idempotency check inside the transaction (belt + suspenders)
+                existing = db.fetchone(
+                    "SELECT 1 FROM transactions WHERE ref_id = %s AND type = 'deposit' FOR UPDATE",
+                    (ref_id,))
+                if existing:
+                    logger.info(
+                        f"Idempotent (in-txn): ref_id {ref_id} already credited")
+                    return PaymentResultDTO(
+                        success=True, gateway=gateway, ref_id=ref_id)
+
+                # Lock user row for update
+                row = db.fetchone(
+                    'SELECT balance FROM users WHERE user_id = %s FOR UPDATE',
+                    (user_id,))
+                if row is None:
+                    db.execute(
+                        'INSERT INTO users (user_id, balance) VALUES (%s, %s) ON CONFLICT DO NOTHING',
+                        (user_id, amount))
+                    new_balance = amount
+                else:
+                    new_balance = int(row[0]) + amount
+                    db.execute(
+                        'UPDATE users SET balance = %s WHERE user_id = %s',
+                        (new_balance, user_id))
+
+                # Record transaction in same DB transaction
+                db.execute(
+                    """INSERT INTO transactions (user_id, amount, type, description, ref_id)
+                       VALUES (%s, %s, %s, %s, %s)""",
+                    (user_id, amount, 'deposit',
+                     f'شارژ حساب از طریق {gateway.value}', ref_id))
+
+            logger.info(
+                f"Payment complete: user={user_id}, amount={amount}, gateway={gateway.value}, ref={ref_id}")
+            return PaymentResultDTO(
+                success=True, gateway=gateway, ref_id=ref_id)
+        except Exception as e:
+            logger.error(
+                f"Balance credit failed after successful payment: user={user_id}, amount={amount}: {e}")
             return PaymentResultDTO(
                 success=False,
                 gateway=gateway,
                 error_message="Payment verified but balance update failed"
             )
 
-        # Record transaction
-        self._txn_repo.create(
-            user_id=user_id,
-            amount=amount,
-            type_trans='deposit',
-            description=f'شارژ حساب از طریق {gateway.value}',
-            ref_id=result.ref_id or result.payment_id
-        )
-
-        logger.info(f"Payment complete: user={user_id}, amount={amount}, gateway={gateway.value}")
-        return result
-
     def approve_card_payment(self, payment_id: str, admin_id: int) -> tuple[bool, int]:
         """
-        Approve a card-to-card payment and credit user.
+        Approve a card-to-card payment and credit user atomically.
         Returns (success, user_id_for_notification).
         """
+        from db.context import db_context
+
         payment = self._card_repo.find_by_id(payment_id)
         if payment is None:
             return False, 0
@@ -312,27 +365,58 @@ class PaymentService:
         user_id = payment['user_id']
         amount = payment['amount']
 
-        # Approve the payment record
-        if not self._card_repo.approve(payment_id, admin_id):
+        try:
+            with db_context('default', transactional=True) as db:
+                # Check if already approved (idempotency)
+                status_row = db.fetchone(
+                    "SELECT status FROM card_payments WHERE payment_id = %s FOR UPDATE",
+                    (payment_id,))
+                if status_row and status_row[0] == 'approved':
+                    logger.warning(
+                        f"Card payment {payment_id} already approved — idempotent skip")
+                    return True, user_id
+
+                # Approve the payment record
+                db.execute(
+                    """UPDATE card_payments
+                       SET status = 'approved', admin_response = %s
+                       WHERE payment_id = %s""",
+                    (f'Approved by admin {admin_id}', payment_id))
+
+                # Lock user row and credit
+                row = db.fetchone(
+                    'SELECT balance FROM users WHERE user_id = %s FOR UPDATE',
+                    (user_id,))
+                if row is None:
+                    db.execute(
+                        'INSERT INTO users (user_id, balance) VALUES (%s, %s) ON CONFLICT DO NOTHING',
+                        (user_id, amount))
+                else:
+                    new_balance = int(row[0]) + amount
+                    db.execute(
+                        'UPDATE users SET balance = %s WHERE user_id = %s',
+                        (new_balance, user_id))
+
+                # Record transaction
+                db.execute(
+                    """INSERT INTO transactions (user_id, amount, type, description, ref_id)
+                       VALUES (%s, %s, %s, %s, %s)""",
+                    (user_id, amount, 'deposit',
+                     'شارژ حساب از طریق کارت به کارت', payment_id))
+
+                # Audit log
+                db.execute(
+                    """INSERT INTO audit_log (admin_id, action, target, details, created_at)
+                       VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)""",
+                    (admin_id, 'approve_card_payment', str(user_id),
+                     f'Approved card payment {payment_id} for {amount}'))
+
+            logger.info(
+                f"Card payment approved: {payment_id}, user={user_id}, amount={amount}")
+            return True, user_id
+        except Exception as e:
+            logger.error(f"Card payment approval failed: {payment_id}: {e}")
             return False, user_id
-
-        # Credit user
-        new_balance = self._user_repo.add_balance(user_id, amount)
-        if new_balance is None:
-            logger.error(f"Balance update failed after card payment approval: {payment_id}")
-            return False, user_id
-
-        # Record transaction
-        self._txn_repo.create(
-            user_id=user_id,
-            amount=amount,
-            type_trans='deposit',
-            description='شارژ حساب از طریق کارت به کارت',
-            ref_id=payment_id
-        )
-
-        logger.info(f"Card payment approved: {payment_id}, user={user_id}, amount={amount}")
-        return True, user_id
 
     def reject_card_payment(self, payment_id: str, reason: str) -> tuple[bool, int]:
         """Reject a card-to-card payment."""
@@ -341,6 +425,7 @@ class PaymentService:
             return False, 0
 
         if self._card_repo.reject(payment_id, reason):
-            logger.info(f"Card payment rejected: {payment_id}, reason={reason}")
+            logger.info(
+                f"Card payment rejected: {payment_id}, reason={reason}")
             return True, payment['user_id']
         return False, 0

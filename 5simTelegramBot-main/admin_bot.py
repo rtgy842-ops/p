@@ -9,7 +9,9 @@ import telebot
 logging.basicConfig(stream=sys.stdout, format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-_TOKEN = os.getenv('BOT_TOKEN', os.getenv('ADMIN_BOT_TOKEN', ''))
+_TOKEN = os.getenv('ADMIN_BOT_TOKEN', '')
+if not _TOKEN:
+    raise RuntimeError("ADMIN_BOT_TOKEN is required. Admin bot must use a separate token from BOT_TOKEN.")
 bot = telebot.TeleBot(_TOKEN)
 app = Flask(__name__)
 

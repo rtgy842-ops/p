@@ -559,7 +559,7 @@ def _process_broadcast(message):
 
 
 # ═══════════════════════════════════════════════════════════════
-# CATALOG
+# CATALOG (Phase 4 — Full CRUD)
 # ═══════════════════════════════════════════════════════════════
 
 @router.callback('admin:catalog')
@@ -568,26 +568,156 @@ def admin_catalog(call):
     from services.catalog_manager import catalog as cat
 
     stats = cat.get_stats()
-    countries = cat.get_all_countries()
+    countries = cat.get_active_countries()
 
     lines = [
         f"🏪 **Catalog Management**\n",
-        f"🌍 Countries: {stats['active_countries']} active / {len(countries)} total",
-        f"📡 Services: {stats['active_services']} active",
-        f"💲 Price Rules: {stats['active_prices']}\n",
-        f"**Countries:**"
+        f"🌍 Active Countries: **{len(countries)}**",
+        f"📡 Active Services: **{stats['active_services']}**",
+        f"💲 Price Rules: **{stats['active_prices']}**",
+        f"🔌 Active Providers: **{stats.get('active_providers', 0)}**\n",
+        f"**Active Countries:**"
     ]
-    for c in countries[:18]:
-        icon = '✅' if c['active'] else '❌'
-        lines.append(f"{icon} {c['name']} ({c['code']})")
+    for c in countries[:15]:
+        lines.append(f"✅ `{c['code']}` — {c['name']} (order: {c['order']})")
 
     keyboard = types.InlineKeyboardMarkup(row_width=2)
     keyboard.add(
-        types.InlineKeyboardButton("📡 View Services", callback_data="admin:cat_services"),
+        types.InlineKeyboardButton("🌍 Toggle Country", callback_data="admin:cat_toggle_country"),
+        types.InlineKeyboardButton("📡 Toggle Service", callback_data="admin:cat_toggle_service"),
+        types.InlineKeyboardButton("💲 View Prices", callback_data="admin:cat_prices"),
+        types.InlineKeyboardButton("📡 All Services", callback_data="admin:cat_services"),
         types.InlineKeyboardButton("◀️ Dashboard", callback_data="admin:dashboard"),
     )
     _bot.edit_message_text('\n'.join(lines), call.message.chat.id,
-                           call.message.message_id, reply_markup=keyboard)
+                           call.message.message_id, reply_markup=keyboard, parse_mode='Markdown')
+
+
+@router.callback('admin:cat_toggle_country')
+def admin_cat_toggle_country_prompt(call):
+    msg = _bot.edit_message_text(
+        "🌍 Send country code to toggle (enable/disable):\n"
+        "Example: `cyprus`",
+        call.message.chat.id, call.message.message_id, parse_mode='Markdown'
+    )
+    _bot.register_next_step_handler(msg, _process_toggle_country)
+
+
+def _process_toggle_country(message):
+    from services.catalog_manager import catalog as cat
+    code = message.text.strip().lower()
+    countries = cat.get_all_countries()
+    matched = [c for c in countries if c['code'] == code]
+    if not matched:
+        _bot.reply_to(message, f"❌ Country '{code}' not found in catalog.")
+        return
+    current = matched[0]['active']
+    cat.toggle_country(code, not current)
+    status = '✅ ENABLED' if not current else '❌ DISABLED'
+    _bot.reply_to(message, f"Country `{code}` is now: **{status}**", parse_mode='Markdown')
+
+
+@router.callback('admin:cat_toggle_service')
+def admin_cat_toggle_service_prompt(call):
+    msg = _bot.edit_message_text(
+        "📡 Send service code to toggle (enable/disable):\n"
+        "Example: `telegram`",
+        call.message.chat.id, call.message.message_id, parse_mode='Markdown'
+    )
+    _bot.register_next_step_handler(msg, _process_toggle_service)
+
+
+def _process_toggle_service(message):
+    from services.catalog_manager import catalog as cat
+    code = message.text.strip().lower()
+    services = cat.get_all_services()
+    matched = [s for s in services if s['code'] == code]
+    if not matched:
+        _bot.reply_to(message, f"❌ Service '{code}' not found in catalog.")
+        return
+    current = matched[0]['active']
+    cat.toggle_service(code, not current)
+    status = '✅ ENABLED' if not current else '❌ DISABLED'
+    _bot.reply_to(message, f"Service `{code}` is now: **{status}**", parse_mode='Markdown')
+
+
+@router.callback('admin:cat_prices')
+def admin_cat_prices(call):
+    from telebot import types
+    from services.catalog_manager import catalog as cat
+
+    active_prices = cat.get_active_prices()
+    lines = ["💲 **Catalog Price Rules**\n"]
+    if not active_prices:
+        lines.append("_No active price rules configured._")
+    else:
+        for p in active_prices[:12]:
+            lines.append(
+                f"• {p.get('country','?')}/{p.get('service','?')} "
+                f"→ {p.get('final_price',0):.2f} USD "
+                f"(profit: {p.get('profit_pct',0)}% + {p.get('profit_fixed',0)})"
+            )
+
+    keyboard = types.InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        types.InlineKeyboardButton("➕ Set Price", callback_data="admin:cat_set_price"),
+        types.InlineKeyboardButton("🌍 Countries", callback_data="admin:catalog"),
+        types.InlineKeyboardButton("◀️ Dashboard", callback_data="admin:dashboard"),
+    )
+    _bot.edit_message_text('\n'.join(lines), call.message.chat.id,
+                           call.message.message_id, reply_markup=keyboard, parse_mode='Markdown')
+
+
+@router.callback('admin:cat_set_price')
+def admin_cat_set_price_prompt(call):
+    msg = _bot.edit_message_text(
+        "💲 Send price rule:\n"
+        "Format: `COUNTRY_CODE SERVICE_CODE PROFIT% [FIXED]`\n"
+        "Example: `cyprus telegram 30 0.50`",
+        call.message.chat.id, call.message.message_id, parse_mode='Markdown'
+    )
+    _bot.register_next_step_handler(msg, _process_set_price)
+
+
+def _process_set_price(message):
+    from services.catalog_manager import catalog as cat
+    from db.context import db_context
+    parts = message.text.strip().split()
+    if len(parts) < 3:
+        _bot.reply_to(message, "❌ Format: COUNTRY SERVICE PROFIT% [FIXED]")
+        return
+    try:
+        country = parts[0].lower()
+        service = parts[1].lower()
+        profit_pct = float(parts[2])
+        profit_fixed = float(parts[3]) if len(parts) > 3 else 0.0
+
+        # Get base price from provider_prices
+        with db_context('default', transactional=False) as db:
+            row = db.fetchone(
+                """SELECT provider_id, price_usd FROM provider_prices
+                   WHERE country_code = %s AND service_code = %s
+                   AND available_count > 0 ORDER BY price_usd ASC LIMIT 1""",
+                (country, service))
+            if not row:
+                _bot.reply_to(message, f"❌ No provider price found for {country}/{service}")
+                return
+            provider_id = int(row[0])
+            base_price = float(row[1])
+            final_price = round(base_price * (1 + profit_pct / 100) + profit_fixed, 4)
+
+        cat.set_pricing(country, service, provider_id, base_price,
+                        profit_pct, profit_fixed, final_price, 0, 0)
+
+        _bot.reply_to(message,
+            f"✅ Price rule set:\n"
+            f"• {country}/{service}\n"
+            f"• Base: {base_price:.4f} USD\n"
+            f"• Profit: {profit_pct}% + {profit_fixed}\n"
+            f"• Final: {final_price:.4f} USD",
+            parse_mode='Markdown')
+    except ValueError:
+        _bot.reply_to(message, "❌ Invalid number. Format: COUNTRY SERVICE PROFIT% [FIXED]")
 
 
 @router.callback('admin:cat_services')
@@ -599,15 +729,16 @@ def admin_cat_services(call):
     lines = ["📡 **Catalog Services**\n"]
     for s in services:
         icon = '✅' if s['active'] else '❌'
-        lines.append(f"{icon} {s['name']} ({s['code']}) [{s['category']}]")
+        lines.append(f"{icon} `{s['code']}` — {s['name']} [{s.get('category','other')}]")
 
-    keyboard = types.InlineKeyboardMarkup()
+    keyboard = types.InlineKeyboardMarkup(row_width=2)
     keyboard.add(
-        types.InlineKeyboardButton("🌍 View Countries", callback_data="admin:catalog"),
+        types.InlineKeyboardButton("✅ Toggle Service", callback_data="admin:cat_toggle_service"),
+        types.InlineKeyboardButton("🌍 Countries", callback_data="admin:catalog"),
         types.InlineKeyboardButton("◀️ Dashboard", callback_data="admin:dashboard"),
     )
     _bot.edit_message_text('\n'.join(lines), call.message.chat.id,
-                           call.message.message_id, reply_markup=keyboard)
+                           call.message.message_id, reply_markup=keyboard, parse_mode='Markdown')
 
 
 # ═══════════════════════════════════════════════════════════════

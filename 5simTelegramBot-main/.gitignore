@@ -1,13 +1,31 @@
 # ── Secrets & Environment ──────────────────────────
 .env
 *.env
+.env.*
 !.env.example
+.env.bak
+.env.backup
+.env.local
+.env.production
+.env.development
+.env.staging
+credentials.json
+*.pem
+*.key
+*.crt
+id_rsa*
+config/secrets.*
+secrets/
+secret/
 
 # ── Database Files ──────────────────────────────────
 *.db
 *.db-journal
 *.db-wal
 *.db-shm
+*.sqlite
+*.sqlite3
+*.dump
 
 # ── Logs ─────────────────────────────────────────────
 logs/
@@ -16,6 +34,7 @@ logs/
 # ── Backups & Data ──────────────────────────────────
 data/backups/
 *.backup
+data/users_backup.json
 
 # ── Python ──────────────────────────────────────────
 __pycache__/

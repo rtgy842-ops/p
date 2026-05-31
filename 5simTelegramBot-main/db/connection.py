@@ -12,7 +12,8 @@ from psycopg2 import pool, extras
 
 logger = logging.getLogger(__name__)
 
-DATABASE_URL = os.getenv('DATABASE_URL', 'postgresql://smsbot:smsbot_secret@postgres:5432/smsbot')
+from config import DATABASE_URL as _CFG_DATABASE_URL
+DATABASE_URL = _CFG_DATABASE_URL or os.getenv('DATABASE_URL') or ''
 
 
 class ConnectionManager:

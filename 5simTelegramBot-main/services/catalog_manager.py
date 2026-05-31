@@ -269,6 +269,39 @@ class CatalogManager:
         return catalog
 
     # ═══════════════════════════════════════════════════════════
+    # ACTIVE PRICES (for admin display)
+    # ═══════════════════════════════════════════════════════════
+
+    def get_active_prices(self) -> list[dict]:
+        """Get active pricing rules for admin overview."""
+        try:
+            with db_context('default', transactional=False) as db:
+                rows = db.fetchall(
+                    """SELECT cp.id, cp.country_code, cp.service_code, p.name as provider_name,
+                       cp.base_price_usd, cp.profit_pct, cp.profit_fixed,
+                       cp.final_price, cp.is_active
+                       FROM catalog_prices cp
+                       JOIN providers p ON cp.provider_id = p.id
+                       WHERE cp.is_active = 1
+                       ORDER BY cp.country_code, cp.service_code"""
+                )
+                return [
+                    {'id': r[0] if not isinstance(r, dict) else r.get('id'),
+                     'country': r[1] if not isinstance(r, dict) else r.get('country_code'),
+                     'service': r[2] if not isinstance(r, dict) else r.get('service_code'),
+                     'provider': r[3] if not isinstance(r, dict) else r.get('provider_name'),
+                     'base_price': float(r[4] or 0) if not isinstance(r, dict) else float(r.get('base_price_usd') or 0),
+                     'profit_pct': float(r[5] or 0) if not isinstance(r, dict) else float(r.get('profit_pct') or 0),
+                     'profit_fixed': float(r[6] or 0) if not isinstance(r, dict) else float(r.get('profit_fixed') or 0),
+                     'final_price': float(r[7] or 0) if not isinstance(r, dict) else float(r.get('final_price') or 0),
+                     'active': bool(r[8]) if not isinstance(r, dict) else bool(r.get('is_active'))}
+                    for r in rows
+                ]
+        except Exception as e:
+            logger.error(f"Failed to get active prices: {e}")
+            return []
+
+    # ═══════════════════════════════════════════════════════════
     # ADMIN STATS
     # ═══════════════════════════════════════════════════════════
 
@@ -279,14 +312,16 @@ class CatalogManager:
                 countries = db.fetchone("SELECT COUNT(*) FROM catalog_countries WHERE is_active = 1")
                 services = db.fetchone("SELECT COUNT(*) FROM catalog_services WHERE is_active = 1")
                 prices = db.fetchone("SELECT COUNT(*) FROM catalog_prices WHERE is_active = 1")
+                providers = db.fetchone("SELECT COUNT(*) FROM providers WHERE is_active = 1")
 
             return {
                 'active_countries': countries[0] if countries else 0,
                 'active_services': services[0] if services else 0,
                 'active_prices': prices[0] if prices else 0,
+                'active_providers': providers[0] if providers else 0,
             }
         except Exception:
-            return {'active_countries': 0, 'active_services': 0, 'active_prices': 0}
+            return {'active_countries': 0, 'active_services': 0, 'active_prices': 0, 'active_providers': 0}
 
 
 # ── Global instance ────────────────────────────────────────────

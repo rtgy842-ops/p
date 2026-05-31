@@ -50,14 +50,30 @@ def back_main_cb(c):
 
 @app.route('/verify/<user_id>/<amount>')
 def verify_payment(user_id, amount):
-    from compat.legacy_facade import payment_verify_zarinpal, add_balance
-    a=request.args.get('Authority'); s=request.args.get('Status')
-    if s!='OK': return render_template('payment_result.html', False, message="Cancelled")
-    ok,ref=payment_verify_zarinpal(a,int(amount))
-    if ok:
-        nb=add_balance(int(user_id),int(amount),description='ZarinPal',ref_id=ref)
-        return render_template('payment_result.html', True, amount=f"{int(amount):,}", ref_id=ref or '---', balance=f"{nb:,}" if nb else "?")
-    return render_template('payment_result.html', False, message="Verification failed")
+    """Verify ZarinPal payment and credit user. Uses atomic PaymentService."""
+    from services.payment_service import PaymentService
+    from data.dto import PaymentGateway
+    a = request.args.get('Authority')
+    s = request.args.get('Status')
+    if s != 'OK':
+        return render_template('payment_result.html', False, message="Payment cancelled by user")
+    try:
+        uid = int(user_id)
+        amt = int(amount)
+        payment_svc = PaymentService()
+        result = payment_svc.verify_and_credit(PaymentGateway.ZARINPAL, a, uid, amt)
+        if result.success:
+            from services.wallet_service import WalletService
+            balance = WalletService.get_balance(uid)
+            return render_template('payment_result.html', True,
+                                   amount=f"{amt:,}", ref_id=result.ref_id or '---',
+                                   balance=f"{balance:,}" if balance else "?")
+        return render_template('payment_result.html', False,
+                               message=result.error_message or "Verification failed")
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Payment verify error: {e}")
+        return render_template('payment_result.html', False, message="Internal error")
 
 if __name__ == '__main__':
     from database import setup_databases; setup_databases(); logger.info("DB ready")

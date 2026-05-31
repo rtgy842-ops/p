@@ -63,7 +63,8 @@ class UserRepository(BaseRepository):
     def add_balance(self, user_id: int, amount: int) -> int | None:
         try:
             with db_context(self.db_name, transactional=True) as db:
-                row = db.fetchone('SELECT balance FROM users WHERE user_id = %s', (user_id,))
+                # SELECT ... FOR UPDATE to prevent race conditions
+                row = db.fetchone('SELECT balance FROM users WHERE user_id = %s FOR UPDATE', (user_id,))
                 if row is None:
                     db.execute('INSERT INTO users (user_id, balance) VALUES (%s, %s) ON CONFLICT DO NOTHING', (user_id, max(amount, 0)))
                     return max(amount, 0)
@@ -81,7 +82,8 @@ class UserRepository(BaseRepository):
             return None
         try:
             with db_context(self.db_name, transactional=True) as db:
-                row = db.fetchone('SELECT balance FROM users WHERE user_id = %s', (user_id,))
+                # SELECT ... FOR UPDATE to prevent race conditions
+                row = db.fetchone('SELECT balance FROM users WHERE user_id = %s FOR UPDATE', (user_id,))
                 if row is None or row[0] < amount:
                     return None
                 new_balance = row[0] - amount
@@ -96,7 +98,8 @@ class UserRepository(BaseRepository):
             return None
         try:
             with db_context(self.db_name, transactional=True) as db:
-                row = db.fetchone('SELECT balance FROM users WHERE user_id = %s', (user_id,))
+                # SELECT ... FOR UPDATE to prevent race conditions
+                row = db.fetchone('SELECT balance FROM users WHERE user_id = %s FOR UPDATE', (user_id,))
                 if row is None:
                     db.execute('INSERT INTO users (user_id, balance) VALUES (%s, %s) ON CONFLICT DO NOTHING', (user_id, amount))
                     return amount

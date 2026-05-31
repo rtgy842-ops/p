@@ -53,19 +53,27 @@ def auth_middleware(call) -> bool:
     if user_id is None:
         return True  # System messages
 
-    user_id = user_id.id
+    uid = user_id.id
     # Admin check — admins always pass
-    if user_id in BOT_CONFIG['admin_ids']:
+    if uid in BOT_CONFIG['admin_ids']:
         return True
 
     # Block check (lazy — avoids import at module level)
     try:
         from db.repositories.user_repository import UserRepository
         repo = UserRepository()
-        is_blocked = repo.get_balance(user_id)
-        # This is a simplified check. Real implementation would check is_blocked column.
-    except Exception:
-        pass  # If DB check fails, allow through
+        user = repo.find_by_id(uid)
+        if user is not None:
+            is_blocked = user[5] if len(user) > 5 else 0
+            if is_blocked:
+                logger.warning(f"Blocked user {uid} attempted to interact")
+                return False
+    except Exception as e:
+        logger.error(f"auth_middleware DB error: {e}")
+        # If DB check fails in production, BLOCK to be safe
+        from config import IS_PRODUCTION
+        if IS_PRODUCTION:
+            return False
 
     return True
 

@@ -130,8 +130,9 @@ def payment_create_zarinpal(user_id: int, amount: int, description: str = '') ->
         return True, result.payment_url, result.authority
     return False, None, None
 
-def payment_verify_zarinpal(authority: str, amount: int) -> tuple:
-    result = _payment.verify_and_credit(PaymentGateway.ZARINPAL, authority, 0, amount)
+def payment_verify_zarinpal(authority: str, amount: int, user_id: int = 0) -> tuple:
+    """Verify ZarinPal payment and credit user. user_id is required."""
+    result = _payment.verify_and_credit(PaymentGateway.ZARINPAL, authority, user_id, amount)
     if result.success:
         return True, result.ref_id
     return False, None
