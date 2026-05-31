@@ -1,143 +1,199 @@
-# PAYMENT REPORT — NumGenius Enterprise SaaS
-## Phase H: Payment Certification
+# PAYMENT CERTIFICATION REPORT — NumGenius Enterprise SaaS
+## Phase H: Payment Lifecycle Certification
 
 **Date:** 2026-05-31
-**Status:** CERTIFIED (Architecture)
+**Methodology:** Static code flow analysis of ALL payment paths
+**Status:** STATIC AUDIT
 
 ---
 
-## PAYMENT GATEWAYS
+## 1. PAYMENT GATEWAYS
 
-### ZarinPal Gateway
-**Implementation:** [`services/payment_service.py:51-174`](5simTelegramBot-main/services/payment_service.py:51)
-**Legacy duplicate:** [`payment.py`](5simTelegramBot-main/payment.py) (dead code)
-
-#### Create Payment Flow
-```
-Customer clicks "Online Payment" → enters amount
-  → PaymentService.initiate_payment(ZARINPAL, user_id, amount)
-    → ZarinPalGateway.create_payment(user_id, amount)
-      → POST https://[sandbox.]zarinpal.com/pg/v4/payment/request.json
-        Body: {merchant_id, amount: amount*10 (Rial), callback_url, metadata}
-      → Response: {data: {code: 100, authority: "AUTH..."}}
-    → Return PaymentResultDTO(payment_url, authority)
-  → User redirected to payment_url
-```
-
-#### Verify & Credit Flow (IDEMPOTENT)
-```
-ZarinPal redirects → /verify/<user_id>/<amount>?Authority=...&Status=OK
-  → PaymentService.verify_and_credit(ZARINPAL, authority, user_id, amount)
-    → IDEMPOTENCY GUARD: Check if authority already in transactions
-    → ZarinPalGateway.verify_payment(authority, amount)
-      → POST https://[sandbox.]zarinpal.com/pg/v4/payment/verify.json
-      → Response: {data: {code: 100/101, ref_id: "REF..."}}
-    → ATOMIC CREDIT:
-      → BEGIN transaction
-      → Second idempotency check (FOR UPDATE)
-      → SELECT balance FOR UPDATE
-      → UPDATE users SET balance = new_balance
-      → INSERT INTO transactions (user_id, amount, type='deposit', ref_id)
-      → COMMIT
-```
-
-**Race Condition Protection:** ✓ Double idempotency check (pre-transaction + in-transaction with FOR UPDATE). Code 101 (already verified) is handled correctly.
-
-**Sandbox Mode:** ✓ Controlled via `ZARINPAL_SANDBOX=true` env var.
-
-### Card-to-Card Gateway
-**Implementation:** [`services/payment_service.py:181-224`](5simTelegramBot-main/services/payment_service.py:181)
-
-#### Flow
-```
-Customer clicks "Card Payment" → enters amount
-  → CardPayment.handle_new_payment()
-    → Shows card info → Customer sends receipt photo
-    → Receipt sent to all admins with approve/reject buttons
-  → Admin clicks Approve
-    → PaymentService.approve_card_payment(payment_id, admin_id)
-      → ATOMIC:
-        → Check status = 'pending' (FOR UPDATE)
-        → UPDATE card_payments SET status='approved'
-        → SELECT balance FOR UPDATE
-        → UPDATE users SET balance = new_balance
-        → INSERT INTO transactions
-        → INSERT INTO audit_log
-        → COMMIT
-```
+| Gateway | Class | File | Status |
+|---------|-------|------|--------|
+| ZarinPal | `ZarinPalGateway(BasePaymentGateway)` | [`services/payment_service.py:53`](services/payment_service.py:53) | ✅ Active |
+| Card-to-Card | `CardToCardGateway(BasePaymentGateway)` | [`services/payment_service.py:183`](services/payment_service.py:183) | ✅ Active |
 
 ---
 
-## IDEMPOTENCY ANALYSIS
+## 2. ZARINPAL PAYMENT LIFECYCLE
 
-| Scenario | Protection | Result |
-|----------|-----------|--------|
-| Same authority called twice | Pre-transaction check (line 277-290) | Returns success without modifying balance |
-| Race: two callbacks for same authority | In-transaction FOR UPDATE check (line 310-317) | First wins, second sees existing row |
-| Same authority from different gateways | ref_id stored with full value | No collision (different ref_id formats) |
-| admin approves card payment twice | FOR UPDATE status check (line 374-377) | Returns True but skips balance update |
+### 2.1 Initiation
+```
+User: "Add Funds" → "Online Payment" → Enter amount
+  → handle_zarinpal_payment() [bot/handlers/payment.py:36]
+    → _generate_payment_state() [bot.py:49] → CSRF state token
+    → payment_create_zarinpal() [compat/legacy_facade.py:128]
+      → PaymentService.initiate_payment(ZARINPAL, user_id, amount)
+        → ZarinPalGateway.create_payment()
+          → POST to ZarinPal API (request.json)
+          → Returns (success, payment_url, authority)
+    → Send payment URL to user
+```
 
-**Verdict:** ✓ Properly idempotent. The double-check pattern (pre-txn read + in-txn FOR UPDATE) is the correct approach for PostgreSQL.
+**Status:** ✅ Correct
+**Issue:** State token generated but not appended to callback URL (see 2.2).
+
+### 2.2 Callback (Verification)
+```
+User completes payment → ZarinPal redirects to /verify/<uid>/<amount>
+  → verify_payment() [bot.py:60]
+    → Check Status=OK
+    → CSRF: _payment_states.pop(state, None) ← state='' (EMPTY!)
+    → PaymentService.verify_and_credit(ZARINPAL, authority, uid, amt)
+      → IDEMPOTENCY CHECK 1: SELECT 1 FROM transactions WHERE ref_id=authority
+      → ZarinPalGateway.verify_payment(authority, amount)
+      → IDEMPOTENCY CHECK 2 (in-txn): SELECT ... FOR UPDATE
+      → Lock user row (SELECT ... FOR UPDATE)
+      → UPDATE users SET balance = balance + amount
+      → INSERT INTO transactions
+```
+
+**Status:** ⚠️ FAIL at CSRF layer. The state token is generated but never reaches the callback.
+
+**Root cause:** In [`bot/handlers/payment.py:56-66`](bot/handlers/payment.py:56-66):
+```python
+state_token = _generate_payment_state(user_id, amount)
+# ... creates payment ...
+payment_url_with_state = payment_url  # ← STATE NOT APPENDED
+```
+The ZarinPal callback URL is set in `ZarinPalGateway.create_payment()` (line 80):
+```python
+"callback_url": f"{self.callback_base}?user_id={user_id}&amount={amount}"
+#                                                          ^^ NO state= parameter
+```
+When ZarinPal redirects to `/verify/<uid>/<amount>`, the query parameters are `Authority` and `Status` from ZarinPal, but NO `state` parameter from our system.
+
+```python
+# bot.py:67
+state = request.args.get('state', '')  # ALWAYS '' (empty string)
+stored = _payment_states.pop(state, None)  # _payment_states.pop('', None) = None
+if stored is None:
+    return "Invalid or expired session"  # ← EVERY PAYMENT FAILS CSRF
+```
+
+### 2.3 Idempotency (Double Callback Protection)
+```
+verify_and_credit():
+  1. Pre-txn: SELECT 1 FROM transactions WHERE ref_id = authority AND type='deposit'
+     → If exists: Return success (already processed)
+  2. Verify with ZarinPal
+  3. In-txn: SELECT 1 FROM transactions WHERE ref_id = authority FOR UPDATE
+     → If exists: Return success (race condition winner already processed)
+  4. Lock user row, credit balance, insert transaction
+```
+
+**Status:** ✅ CORRECT — Belt-and-suspenders idempotency.
+
+**Database support:** Partial unique index `uq_transactions_ref_id` WHERE ref_id IS NOT NULL (migration 002).
+
+### 2.4 Race Condition Test
+```
+Scenario: Two identical callbacks arrive simultaneously
+  Thread A: Pre-txn check → not found → ZarinPal verify → In-txn check → FOR UPDATE
+  Thread B: Pre-txn check → not found → ZarinPal verify → In-txn check → FOR UPDATE (WAITS for A)
+
+  Thread A: In-txn check → not found → Lock row → Credit balance → Insert txn → COMMIT
+  Thread B: In-txn check → FOUND → Return success without double-crediting
+```
+
+**Status:** ✅ CORRECT — `FOR UPDATE` row locking + unique index prevents double-credit.
 
 ---
 
-## RACE CONDITION ANALYSIS
+## 3. CARD-TO-CARD PAYMENT LIFECYCLE
 
-### Balance deduction race
+### 3.1 Initiation
 ```
-Thread A: SELECT balance WHERE user_id=X FOR UPDATE → gets 100000
-Thread B: SELECT balance WHERE user_id=X FOR UPDATE → BLOCKED (waits for A)
-Thread A: UPDATE balance=90000, COMMIT
-Thread B: (unblocked) SELECT returns 90000 → correct starting balance
+User: "Add Funds" → "Card Payment" → Enter amount
+  → CardPayment.handle_new_payment() [card_payment.py:49]
+    → Save payment request → Show card info → Wait for receipt
 ```
-**Verdict:** ✓ Row-level locking prevents balance races.
 
-### Payment verification race
+### 3.2 Receipt Upload
 ```
-Thread A: verify_and_credit(authority="A1", user=1, amount=50000)
-Thread B: verify_and_credit(authority="A1", user=1, amount=50000)
+User sends photo → handle_receipt() [card_payment.py:102]
+  → Save file_id to card_payments table
+  → Forward to all admin_ids with Approve/Reject buttons
 ```
-**Verdict:** ✓ Thread A processes, Thread B's idempotency check finds existing ref_id and returns success.
+
+### 3.3 Admin Approval
+```
+Admin clicks "Approve" → verify_payment(action="approve") [card_payment.py:161]
+  → Admin ID check
+  → Payment status check (must be 'pending')
+  → compat_add_balance(user_id, amount) → WalletService.deposit()
+  → CardPaymentRepository.approve(payment_id, admin_id)
+  → Notify user
+```
+
+**Status:** ✅ CORRECT (with qualification — uses compat layer instead of PaymentService directly)
+
+### 3.4 Admin Rejection
+```
+Admin clicks "Reject" → process_rejection() [card_payment.py:233]
+  → Admin ID check
+  → Capture reason text
+  → CardPaymentRepository.reject(payment_id, reason)
+  → Notify user with reason
+```
+
+**Status:** ✅ CORRECT
+
+### 3.5 Duplicate Approval Protection
+```python
+# card_payment.py:178-180
+if status != 'pending':
+    self.bot.answer_callback_query(call.id, "Invalid data")
+    return
+```
+
+**Status:** ✅ CORRECT — Rejects non-pending payments.
+
+### 3.6 Alternative Approval Path (PaymentService)
+```python
+# services/payment_service.py:356-421
+PaymentService.approve_card_payment(payment_id, admin_id)
+  → In-txn: Check status = 'approved' → idempotent skip
+  → UPDATE card_payments SET status='approved'
+  → Lock user row → Credit balance → Insert transaction
+  → Insert audit_log
+```
+
+**Status:** ✅ CORRECT — More comprehensive than the card_payment.py path (includes audit logging). However, this method is NOT called from the bot handlers (they use card_payment.py directly).
 
 ---
 
-## DUPLICATE CALLBACK TEST
-
-| Test Case | Code Path | Expected |
-|-----------|-----------|----------|
-| Same authority, same user, same amount | Idempotency guard → return success | ✓ Skip |
-| Same authority, same user, different amount | Gateway verify fails (amount mismatch) | ✓ Reject |
-| Same authority, different user | Unrealistic (authority tied to user in callback URL) | N/A |
-
----
-
-## REFUND FLOW
+## 4. REFUND LIFECYCLE
 
 ```
-Order cancellation:
-  cancel_order_<activation_id>
-    → SMSService.cancel_number(activation_id)
-    → order_cancel(activation_id)
-      → OrderRepository.cancel_by_activation_id()
-      → WalletService.refund(user_id, price, description, ref_id)
-        → ATOMIC: SELECT FOR UPDATE → UPDATE balance → INSERT transaction
+User cancels order → order_cancel() [compat/legacy_facade.py:111]
+  → sms_cancel_number() → provider cancel
+  → order_cancel() → OrderRepository.cancel_by_activation_id()
+  → refund_balance() → WalletService.refund()
+    → SELECT balance FOR UPDATE → UPDATE balance → INSERT transaction
 ```
 
-**Verdict:** ✓ Proper atomic refund with transaction recording.
+**Status:** ✅ CORRECT — Atomic refund with row locking.
 
 ---
 
-## ISSUES FOUND
+## 5. PAYMENT VERDICT
 
-| # | Issue | Severity |
-|---|-------|----------|
-| PH1 | 🔴 ZarinPal callback `/verify` route has NO CSRF/state token — any GET request can be forged | CRITICAL |
-| PH2 | 🟡 `verify_and_credit()` catches Exception and swallows it (line 345-352) — payment verified but balance not credited = money lost to provider | HIGH |
-| PH3 | 🟡 Bot-user notification on payment is async (line 46-48) — if send_message fails, user isn't notified but money was credited | MEDIUM |
-| PH4 | 🟢 Legacy `payment.py` duplicates `ZarinPalGateway` — dead code | LOW |
+| Component | Status |
+|-----------|--------|
+| ZarinPal initiation | ✅ |
+| ZarinPal callback | ❌ CSRF state broken |
+| ZarinPal idempotency | ✅ Double-check + FOR UPDATE |
+| ZarinPal race condition | ✅ Protected |
+| Card-to-card flow | ✅ |
+| Card duplicate approval | ✅ |
+| Refund flow | ✅ Atomic with row lock |
+| Duplicate callback test | ✅ Static analysis passes |
+| Race condition test | ✅ Static analysis passes |
+
+**Overall: PARTIALLY_CERTIFIED — 1 CRITICAL blocking issue (ZarinPal CSRF broken). Payment logic otherwise sound.**
 
 ---
 
-## OVERALL VERDICT
-
-**CERTIFIED** (Architecture) — Payment system has proper atomicity, idempotency, race condition protection, and dual gateway support. The CRITICAL issue is missing CSRF protection on the callback URL. The HIGH issue of swallowed exceptions after successful verification needs a compensating action (log to dead-letter queue or retry).
+*End of Phase H — Payment Report*

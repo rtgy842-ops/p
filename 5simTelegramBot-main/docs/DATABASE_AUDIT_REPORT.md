@@ -1,300 +1,221 @@
 # DATABASE AUDIT REPORT — NumGenius Enterprise SaaS
 ## Phase D: Database Validation
 
-**Date:** 2026-05-31  
-**Database:** PostgreSQL (single database: `smsbot`, schema: `public`)
+**Date:** 2026-05-31
+**Database:** PostgreSQL (via alembic + db/schema.py)
+**Status:** STATIC ANALYSIS ONLY (No live PostgreSQL available in audit environment)
 
 ---
 
-## SCHEMA INVENTORY
+## 1. SCHEMA INVENTORY
 
-### Source Files
-- [`db/schema.py`](5simTelegramBot-main/db/schema.py) — `ALL_TABLES` (27 tables), `INDEXES` (24 indexes), `DEFAULT_SETTINGS` (8 settings)
-- [`alembic/versions/001_initial_schema.py`](5simTelegramBot-main/alembic/versions/001_initial_schema.py) — Core + Enterprise tables
-- [`alembic/versions/002_constraints.py`](5simTelegramBot-main/alembic/versions/002_constraints.py) — Constraints, indexes, seed data
-- [`db/migrations.py`](5simTelegramBot-main/db/migrations.py) — Custom migration system (legacy)
+Total tables defined: **22**
+
+### Core Tables (7)
+| Table | Source | Primary Key | Foreign Keys | Unique Constraints |
+|-------|--------|-------------|-------------|-------------------|
+| users | 001_initial | user_id (BIGINT) | — | — |
+| transactions | 001_initial | id (SERIAL) | user_id → users | — |
+| orders | 001_initial | id (SERIAL) | user_id → users | order_id (TEXT) |
+| card_payments | 001_initial | payment_id (TEXT) | user_id → users | — |
+| settings | 001_initial | key (TEXT) | — | — |
+| card_info | 001_initial | id (SERIAL) | — | — |
+| activation_codes | 001_initial | id (SERIAL) | order_id → orders | — |
+
+### Admin Tables (4)
+| Table | Source | Primary Key | Unique Constraints |
+|-------|--------|-------------|-------------------|
+| required_channels | 001_initial | username (TEXT) | — |
+| operator_settings | 001_initial | id (SERIAL) | (service, country) |
+| admin_roles | 001_initial | id (SERIAL) | user_id |
+| audit_log | 001_initial | id (SERIAL) | — |
+
+### Enterprise Tables (9)
+| Table | Source | Primary Key | Foreign Keys | Unique Constraints |
+|-------|--------|-------------|-------------|-------------------|
+| subscriptions | 001_initial | id (SERIAL) | user_id → users | user_id (via 003) |
+| referrals | 001_initial | id (SERIAL) | referrer_id → users, referred_id → users | referred_id |
+| referral_codes | 001_initial | id (SERIAL) | user_id → users | user_id, code |
+| currencies | 001_initial | id (SERIAL) | — | code |
+| providers | 001_initial | id (SERIAL) | — | name |
+| provider_countries | 001_initial | id (SERIAL) | provider_id → providers | (provider_id, country_code) |
+| provider_services | 001_initial | id (SERIAL) | provider_id → providers | (provider_id, service_code) |
+| provider_prices | 001_initial | id (SERIAL) | provider_id → providers | (provider_id, country_code, service_code, operator_name) |
+| catalog_countries | 001_initial | id (SERIAL) | — | country_code |
+| catalog_services | 001_initial | id (SERIAL) | — | service_code |
+| catalog_prices | 001_initial | id (SERIAL) | provider_id → providers | (country_code, service_code, provider_id) |
+| notifications | 001_initial | id (SERIAL) | user_id → users | — |
+| fraud_log | 001_initial | id (SERIAL) | — | — |
+
+### Infrastructure Tables (2)
+| Table | Source | Primary Key |
+|-------|--------|-------------|
+| wallet_ledger | 004_wallet_ledger | id (SERIAL) |
+| rate_limits | 004_wallet_ledger | id (SERIAL), UNIQUE(key, endpoint, window_start) |
+
+### Schema-Only Tables (Not In Alembic)
+| Table | Source | Status |
+|-------|--------|--------|
+| _migrations | db/schema.py only | ❌ Missing from alembic — MigrationManager uses it |
 
 ---
 
-## TABLES — COMPLETE INVENTORY (27 tables)
+## 2. CONSTRAINT AUDIT
 
-### Core Tables (11)
+### 2.1 Missing Constraints
 
-| # | Table | Primary Key | Notes |
-|---|-------|-------------|-------|
-| 1 | `users` | `user_id` (BIGINT) | Balance stored as INTEGER (Toman) |
-| 2 | `transactions` | `id` (SERIAL) | FK → users(user_id) |
-| 3 | `orders` | `id` (SERIAL) | FK → users(user_id), UNIQUE(order_id) |
-| 4 | `card_payments` | `payment_id` (TEXT) | FK → users(user_id) |
-| 5 | `settings` | `key` (TEXT) | Key-value store |
-| 6 | `card_info` | `id` (SERIAL) | Bank card info |
-| 7 | `required_channels` | `username` (TEXT) | Mandatory join channels |
-| 8 | `operator_settings` | `id` (SERIAL) | UNIQUE(service, country) |
-| 9 | `activation_codes` | `id` (SERIAL) | FK → orders(id) |
-| 10 | `_migrations` | `version` (INTEGER) | Legacy migration tracking |
-| 11 | `alembic_version` | `version_num` (VARCHAR) | Alembic's own tracking — **ISSUE: 001 migration creates this manually** |
+| Table | Missing Constraint | Severity | Impact |
+|-------|-------------------|----------|--------|
+| wallet_ledger | CHECK (amount >= 0) in schema.py/wallet_ledger.py but NOT in 004 migration | HIGH | CONSISTENCY: Three DDL sources disagree |
+| transactions | CHECK (amount > 0) exists in 001_initial but NOT in db/schema.py ALL_TABLES | MEDIUM | CONSISTENCY: schema.py missing constraint |
+| users | CHECK (balance >= 0) exists in 001_initial but NOT in db/schema.py ALL_TABLES | MEDIUM | CONSISTENCY: schema.py missing constraint |
+| orders | CHECK (price >= 0) exists in 001_initial but NOT in db/schema.py ALL_TABLES | MEDIUM | CONSISTENCY: schema.py missing constraint |
+| card_payments | CHECK (amount > 0) exists in 001_initial but NOT in db/schema.py ALL_TABLES | MEDIUM | CONSISTENCY: schema.py missing constraint |
 
-### Enterprise Tables (16)
+### 2.2 Constraint Verification (Static)
 
-| # | Table | Primary Key | Unique Constraints |
-|---|-------|-------------|-------------------|
-| 12 | `subscriptions` | `id` (SERIAL) | **MISSING: UNIQUE(user_id)** — see issue D1 |
-| 13 | `referrals` | `id` (SERIAL) | UNIQUE(referred_id) |
-| 14 | `referral_codes` | `id` (SERIAL) | UNIQUE(user_id), UNIQUE(code) |
-| 15 | `admin_roles` | `id` (SERIAL) | UNIQUE(user_id) |
-| 16 | `audit_log` | `id` (SERIAL) | None |
-| 17 | `currencies` | `id` (SERIAL) | UNIQUE(code) |
-| 18 | `providers` | `id` (SERIAL) | UNIQUE(name) |
-| 19 | `provider_countries` | `id` (SERIAL) | UNIQUE(provider_id, country_code) |
-| 20 | `provider_services` | `id` (SERIAL) | UNIQUE(provider_id, service_code) |
-| 21 | `provider_prices` | `id` (SERIAL) | UNIQUE(provider_id, country_code, service_code, operator_name) |
-| 22 | `catalog_countries` | `id` (SERIAL) | UNIQUE(country_code) |
-| 23 | `catalog_services` | `id` (SERIAL) | UNIQUE(service_code) |
-| 24 | `catalog_prices` | `id` (SERIAL) | UNIQUE(country_code, service_code, provider_id) |
-| 25 | `notifications` | `id` (SERIAL) | None |
-| 26 | `fraud_log` | `id` (SERIAL) | None |
-| 27 | `wallet_ledger` | `id` (SERIAL) | CHECK (amount >= 0) |
-| 28 | `rate_limits` | `id` (SERIAL) | UNIQUE(key, endpoint, window_start) |
+| Constraint Type | Table | Column | Present? |
+|----------------|-------|--------|----------|
+| PRIMARY KEY | All 22 tables | id/user_id/payment_id/key/username | ✅ |
+| FOREIGN KEY (users) | transactions, orders, card_payments | user_id | ✅ |
+| FOREIGN KEY (users) | subscriptions, referrals, referral_codes | user_id/referrer_id/referred_id | ✅ |
+| FOREIGN KEY (providers) | provider_countries, provider_services, provider_prices | provider_id | ✅ |
+| FOREIGN KEY (providers) | catalog_prices | provider_id | ✅ |
+| FOREIGN KEY (orders) | activation_codes | order_id | ✅ |
+| UNIQUE | subscriptions | user_id | ✅ (via 003) |
+| UNIQUE | referrals | referred_id | ✅ |
+| UNIQUE | referral_codes | user_id, code | ✅ |
+| UNIQUE | operator_settings | (service, country) | ✅ |
+| UNIQUE | provider_countries | (provider_id, country_code) | ✅ |
+| UNIQUE | provider_services | (provider_id, service_code) | ✅ |
+| UNIQUE | provider_prices | (provider_id, country_code, service_code, operator_name) | ✅ |
+| UNIQUE | catalog_prices | (country_code, service_code, provider_id) | ✅ |
+| UNIQUE | rate_limits | (key, endpoint, window_start) | ✅ |
+| CHECK | users | balance >= 0 | ✅ (via 002 for alembic) |
+| CHECK | transactions | amount > 0 | ✅ (001_initial) |
+| CHECK | orders | price >= 0 | ✅ (001_initial) |
+| CHECK | card_payments | amount > 0 | ✅ (001_initial) |
+| CHECK | wallet_ledger | amount >= 0 | ❌ (004 uses `CHECK (amount >= 0)` — verified in DDL) |
 
----
+### 2.3 Partial Unique Index (Idempotency)
 
-## ISSUES FOUND
-
-### D1 — MISSING CONSTRAINT: `subscriptions.user_id` needs UNIQUE
-
-**Severity:** HIGH  
-**Table:** `subscriptions`  
-**Root Cause:** The [`subscriptions`](5simTelegramBot-main/db/schema.py:113) table defines `user_id BIGINT NOT NULL REFERENCES users(user_id)` but **no** `UNIQUE(user_id)` constraint. The application code at [`services/subscription_service.py:153`](5simTelegramBot-main/services/subscription_service.py:153) uses `ON CONFLICT (user_id) DO UPDATE` which requires a unique constraint.
-
+**Location:** [`002_constraints.py:22-31`](alembic/versions/002_constraints.py:22-31)
 ```sql
--- Current schema (db/schema.py:113):
-CREATE TABLE IF NOT EXISTS subscriptions (
-    id              SERIAL PRIMARY KEY,
-    user_id         BIGINT NOT NULL REFERENCES users(user_id),  -- NO UNIQUE!
-    ...
-)
+CREATE UNIQUE INDEX uq_transactions_ref_id
+    ON transactions(ref_id)
+    WHERE ref_id IS NOT NULL;
+```
+**Status:** ✅ CORRECT — This prevents duplicate payment callbacks.
 
--- Code expecting uniqueness (subscription_service.py:153):
-INSERT INTO subscriptions (user_id, tier, status, started_at)
-VALUES (%s, %s, 'active', CURRENT_TIMESTAMP)
-ON CONFLICT (user_id) DO UPDATE SET ...  -- WILL FAIL without UNIQUE(user_id)
+---
+
+## 3. INDEX AUDIT
+
+Total indexes: **26**
+
+### 3.1 Index Coverage
+
+| Query Pattern | Index | Present? |
+|--------------|-------|----------|
+| Find user by ID | PRIMARY KEY (users.user_id) | ✅ |
+| Recent transactions by user | idx_transactions_user_id | ✅ |
+| Orders by user | idx_orders_user_id | ✅ |
+| Orders by activation_id | idx_orders_activation_id | ✅ |
+| Find card payment by ID | PRIMARY KEY (card_payments.payment_id) | ✅ |
+| Activation codes by order | idx_activation_codes_order_id | ✅ |
+| Subscription by user | idx_subscriptions_user_id | ✅ |
+| Referrals by referrer | idx_referrals_referrer | ✅ |
+| Referral code lookup | idx_referral_codes_code | ✅ |
+| Audit log by admin | idx_audit_log_admin | ✅ |
+| Provider prices lookup | idx_provider_prices_lookup | ✅ |
+| Catalog prices lookup | idx_catalog_prices_lookup | ✅ |
+| Notifications by user+read | idx_notifications_user | ✅ |
+| Wallet ledger by user | idx_wallet_ledger_user | ✅ |
+| Rate limits by key+endpoint | idx_rate_limits_key | ✅ |
+
+### 3.2 Missing Recommended Indexes
+- `idx_orders_status_created` — (status, created_at) for active order queries
+- `idx_transactions_type_user` — (type, user_id) for transaction type filtering
+
+---
+
+## 4. MIGRATION CONSISTENCY
+
+### 4.1 Migration Chain
+
+```
+None → 001_initial → 002_constraints → 003_subscriptions_unique → 004_wallet_ledger
 ```
 
-**Fix:** Add `UNIQUE(user_id)` to the `subscriptions` table.
+**Chain integrity:** ✅ All `down_revision` values correctly chain.
+
+### 4.2 Schema vs Alembic Drift
+
+| Object | db/schema.py | alembic/versions | MigrationManager (db/migrations.py) |
+|--------|-------------|-----------------|--------------------------------------|
+| users table | ✅ (no CHECK) | ✅ (with CHECK) | ✅ |
+| wallet_ledger | ✅ (no CHECK) | ✅ (with CHECK) | ❌ NOT IN MIGRATIONS |
+| rate_limits | ✅ | ✅ (004) | ❌ NOT IN MIGRATIONS |
+| _migrations | ✅ | ❌ NOT IN ALEMBIC | ✅ (used by MigrationManager) |
+| alembic_version | ❌ | ✅ (001 creates it) | ❌ |
+
+**Drift Assessment:** MODERATE — `db/schema.py` + `MigrationManager` is a parallel migration system to alembic. They are NOT synchronized. Running BOTH could cause duplicate table errors. Running only alembic means `_migrations` table doesn't exist.
 
 ---
 
-### D2 — CONFLICT: Two migration systems manage the same tables
+## 5. ROLLBACK TESTS
 
-**Severity:** HIGH  
-**Root Cause:** `db/migrations.py` AND Alembic both create tables. Running both will cause conflicts on `_migrations` vs `alembic_version` tracking tables. `db/migrations.py:17` uses f-string interpolation for settings INSERT which is a minor SQL injection vector.
+All 4 migrations have `downgrade()` functions:
 
-**Fix:** Choose one migration system. Recommended: Remove `db/migrations.py` entirely, use Alembic exclusively.
+| Migration | Downgrade | Verified? |
+|-----------|-----------|-----------|
+| 001_initial | Drop all 24 tables CASCADE | ⚠️ Static only |
+| 002_constraints | Drop indexes + delete seed data | ⚠️ Static only |
+| 003_subscriptions_unique | Drop UNIQUE constraint | ⚠️ Static only |
+| 004_wallet_ledger | Drop wallet_ledger + rate_limits CASCADE | ⚠️ Static only |
 
----
-
-### D3 — `alembic_version` table created manually in migration
-
-**Severity:** MEDIUM  
-**File:** [`alembic/versions/001_initial_schema.py:125-130`](5simTelegramBot-main/alembic/versions/001_initial_schema.py:125)  
-**Root Cause:** Alembic automatically manages its own `alembic_version` table. Creating it manually with `CREATE TABLE IF NOT EXISTS alembic_version` will conflict with Alembic's internal table management. The Alembic `env.py:67` configures `version_table='alembic_version'` which expects to create/manage the table itself.
-
-**Fix:** Remove lines 125-130 from migration 001.
+**Status:** All downgrade functions exist and appear correct in static analysis. NOT tested against a live database.
 
 ---
 
-### D4 — Missing foreign key indexes
+## 6. DATA INTEGRITY CONCERNS
 
-**Severity:** MEDIUM  
-**Root Cause:** The following foreign keys lack covering indexes, which will cause sequential scans on DELETE/UPDATE cascade:
-- `orders.user_id` — has index `idx_orders_user_id` ✓
-- `transactions.user_id` — has index `idx_transactions_user_id` ✓
-- `card_payments.user_id` — has index `idx_card_payments_user_id` ✓
-- `subscriptions.user_id` — has index `idx_subscriptions_user_id` ✓
-- `referrals.referrer_id` — has index `idx_referrals_referrer` ✓
-- `referrals.referred_id` — **NO INDEX** ✗
-- `provider_countries.provider_id` — **NO INDEX** ✗
-- `provider_services.provider_id` — **NO INDEX** ✗
-- `provider_prices.provider_id` — covered by composite index ✓
-- `catalog_prices.provider_id` — covered by composite index ✓
-- `activation_codes.order_id` — has index `idx_activation_codes_order_id` ✓
-- `notifications.user_id` — has index `idx_notifications_user` ✓
+### 6.1 Double Migration System Risk
+- `db/migrations.py` (MigrationManager) runs on `setup_databases()`
+- alembic runs via `alembic upgrade head`
+- Both can create tables. Running both can cause `CREATE TABLE IF NOT EXISTS` collisions.
+- **Recommendation:** Deprecate MigrationManager. Use alembic exclusively.
 
-**Fix:** Add indexes on `referrals(referred_id)`, `provider_countries(provider_id)`, `provider_services(provider_id)`.
+### 6.2 Sequences Not Explicitly Reset
+- SERIAL columns auto-create sequences. alembic doesn't manage these explicitly.
+- If data is inserted during migration (seed data), sequences may not advance.
+- **Recommendation:** After seeding data with explicit IDs, run `SELECT setval('table_id_seq', COALESCE((SELECT MAX(id)+1 FROM table), 1), false);`
 
----
+### 6.3 No Foreign Key on `fraud_log.user_id`
+- `fraud_log` has `user_id BIGINT` with NO foreign key to users.
+- This allows fraud events for non-existent users.
+- **Recommendation:** Add `REFERENCES users(user_id)` or document the intentional omission.
 
-### D5 — `_migrations` table uses INTEGER version (no auto-increment)
-
-**Severity:** LOW  
-**File:** [`db/schema.py:104-111`](5simTelegramBot-main/db/schema.py:104)  
-**Root Cause:** `_migrations.version INTEGER PRIMARY KEY` without `SERIAL` or `IDENTITY`. Version numbers are manually specified, which works but is non-standard.
-
-**Fix:** This is the legacy migration table. Remove with `db/migrations.py` (issue D2).
+### 6.4 No Foreign Key on `admin_roles.user_id`
+- `admin_roles` has `user_id BIGINT NOT NULL UNIQUE` with NO foreign key to users.
+- **Recommendation:** Add `REFERENCES users(user_id)`.
 
 ---
 
-### D6 — `admin_bot.py` schema duplicated between schema.py and alembic migration
+## 7. DATABASE VALIDATION VERDICT
 
-**Severity:** LOW  
-**File:** [`db/schema.py:149-158`](5simTelegramBot-main/db/schema.py:149) vs [`001_initial_schema.py:172-181`](5simTelegramBot-main/alembic/versions/001_initial_schema.py:172)  
-**Root Cause:** `admin_roles` table defined in both `db/schema.py` and Alembic. Alembic migration doesn't reference `db/schema.py` — it contains inline SQL. If the schema changes, both sources must be updated.
+| Category | Status |
+|----------|--------|
+| All tables defined | ✅ 22 tables |
+| All indexes defined | ✅ 26 indexes |
+| All constraints defined | ⚠️ 5 schema-drift gaps |
+| All foreign keys defined | ⚠️ 2 missing (fraud_log, admin_roles) |
+| Migration chain intact | ✅ |
+| Rollback tests exist | ✅ All 4 migrations have downgrade |
+| Migration consistency | ⚠️ Dual system (alembic + MigrationManager) |
 
-**Fix:** Single source of truth. Have Alembic migration read DDL from `db/schema.py` or use SQLAlchemy declarative models.
-
----
-
-## INDEX INVENTORY
-
-### Performance indexes (24 defined)
-All indexes in [`db/schema.py:341-366`](5simTelegramBot-main/db/schema.py:341) and [`002_constraints.py:90-118`](5simTelegramBot-main/alembic/versions/002_constraints.py:90):
-
-| Index | Table | Column(s) | Status |
-|-------|-------|-----------|--------|
-| idx_transactions_user_id | transactions | user_id | ✓ |
-| idx_transactions_timestamp | transactions | timestamp | ✓ |
-| idx_transactions_type | transactions | type | ✓ (002 only) |
-| idx_transactions_ref_id | transactions | ref_id | ✓ (002 only) |
-| idx_orders_user_id | orders | user_id | ✓ |
-| idx_orders_activation_id | orders | activation_id | ✓ |
-| idx_orders_order_id | orders | order_id | ✓ |
-| idx_orders_status | orders | status | ✓ (002 only) |
-| idx_orders_created_at | orders | created_at | ✓ (002 only) |
-| idx_card_payments_user_id | card_payments | user_id | ✓ |
-| idx_card_payments_status | card_payments | status | ✓ |
-| idx_activation_codes_order_id | activation_codes | order_id | ✓ |
-| idx_subscriptions_user_id | subscriptions | user_id | ✓ |
-| idx_subscriptions_tier | subscriptions | tier | ✓ |
-| idx_referrals_referrer | referrals | referrer_id | ✓ |
-| idx_referral_codes_code | referral_codes | code | ✓ |
-| idx_referral_codes_user | referral_codes | user_id | ✓ (002 only) |
-| idx_audit_log_admin | audit_log | admin_id | ✓ |
-| idx_audit_log_action | audit_log | action | ✓ |
-| idx_audit_log_created | audit_log | created_at | ✓ |
-| idx_currencies_code | currencies | code | ✓ |
-| idx_provider_prices_lookup | provider_prices | composite | ✓ |
-| idx_catalog_prices_lookup | catalog_prices | composite | ✓ |
-| idx_notifications_user | notifications | user_id, is_read | ✓ |
-| idx_fraud_log_user | fraud_log | user_id | ✓ (schema only) |
-| idx_wallet_ledger_user | wallet_ledger | user_id | ✓ (schema only) |
-| idx_wallet_ledger_type | wallet_ledger | entry_type | ✓ (schema only) |
-| idx_wallet_ledger_created | wallet_ledger | created_at | ✓ (schema only) |
-| idx_rate_limits_key | rate_limits | key, endpoint | ✓ (schema only) |
-
-### Unique partial index (002_constraints)
-| Index | Table | Condition |
-|-------|-------|-----------|
-| uq_transactions_ref_id | transactions | WHERE ref_id IS NOT NULL |
-
-This ensures idempotency for payment verification — prevents double-crediting the same transaction reference. **Excellent design.**
+**Overall: PARTIALLY_CERTIFIED — Schema is well-designed but has dual migration system risk and 2 missing foreign keys.**
 
 ---
 
-## CHECK CONSTRAINTS
-
-| Table | Constraint | Source |
-|-------|-----------|--------|
-| users | `ck_users_balance_non_negative` CHECK (balance >= 0) | 002_constraints:38-42 |
-| transactions | CHECK (amount > 0) | 001_initial_schema:40 |
-| wallet_ledger | CHECK (amount >= 0) | db/schema.py:307 |
-| orders | CHECK (price >= 0) | 001_initial_schema:57 |
-| card_payments | CHECK (amount > 0) | 001_initial_schema:70 |
-
-**Note:** `users.balance` check is added in migration 002 but NOT present in `db/schema.py:17`. If `setup_databases()` runs before migration 002, this constraint won't exist.
-
----
-
-## FOREIGN KEY RELATIONSHIPS
-
-All foreign keys are properly defined with `REFERENCES` clauses. No orphaned references detected.
-
-| Child Table | Column | Parent Table | ON DELETE |
-|-------------|--------|-------------|-----------|
-| transactions | user_id | users | NO ACTION (default) |
-| orders | user_id | users | NO ACTION |
-| card_payments | user_id | users | NO ACTION |
-| activation_codes | order_id | orders | NO ACTION |
-| subscriptions | user_id | users | NO ACTION |
-| referrals | referrer_id | users | NO ACTION |
-| referrals | referred_id | users | NO ACTION |
-| referral_codes | user_id | users | NO ACTION |
-| notifications | user_id | users | NO ACTION |
-| provider_countries | provider_id | providers | NO ACTION |
-| provider_services | provider_id | providers | NO ACTION |
-| provider_prices | provider_id | providers | NO ACTION |
-| catalog_prices | provider_id | providers | NO ACTION |
-
-**Assessment:** No `ON DELETE CASCADE` means manual cleanup is required when deleting users. For a financial system, this is **correct** — financial records should never be automatically deleted.
-
----
-
-## MIGRATION ROLLBACK TEST
-
-### Migration 001 → downgrade
-The `downgrade()` function in [`001_initial_schema.py:339-351`](5simTelegramBot-main/alembic/versions/001_initial_schema.py:339) drops all tables in dependency order:
-
-```python
-tables = [
-    'fraud_log', 'notifications', 'catalog_prices', 'catalog_services',
-    'catalog_countries', 'provider_prices', 'provider_services',
-    'provider_countries', 'providers', 'currencies', 'audit_log',
-    'admin_roles', 'referral_codes', 'referrals', 'subscriptions',
-    'activation_codes', 'operator_settings', 'required_channels',
-    'card_info', 'settings', 'card_payments', 'orders', 'transactions',
-    'users', 'alembic_version',
-]
-```
-
-**Assessment:** ✓ Correct reverse-dependency order. All child tables dropped before parents.
-
-### Migration 002 → downgrade
-The `downgrade()` in [`002_constraints.py:121-131`](5simTelegramBot-main/alembic/versions/002_constraints.py:121) drops constraints and deletes seed data:
-- ✓ Drops `uq_transactions_ref_id` unique index
-- ✓ Drops `ck_users_balance_non_negative` check constraint
-- ⚠ Deletes ALL rows from `currencies`, `providers`, `catalog_services` — may delete user-added data
-
-**Issue:** Seed data deletion is destructive. Consider using `DELETE WHERE created_in_migration = true` flag or simply not deleting seed data on rollback.
-
----
-
-## MIGRATION CONSISTENCY
-
-### Schema duplication between db/schema.py and Alembic
-
-**Issue:** `db/schema.py` and Alembic migrations define the same tables independently. This means:
-1. A change in `db/schema.py` must be manually replicated in a new Alembic migration
-2. `setup_databases()` (which uses `db/schema.py`) and `alembic upgrade head` may produce inconsistent schemas if they diverge
-
-**Recommendation:** Have Alembic be the **single source of truth**. Either:
-- Remove `setup_databases()` and always use `alembic upgrade head`
-- Or have Alembic migrations import DDL from `db/schema.py` constants
-
----
-
-## SEED DATA INVENTORY
-
-| Migration | Table | Records |
-|-----------|-------|---------|
-| 001 (custom) | settings | 8 default key-value pairs |
-| 001 (custom) | currencies | 1 (USD) |
-| 001 (custom) | providers | 1 (herosms) |
-| 001 (custom) | catalog_services | 4 (telegram, whatsapp, instagram, google) |
-| 001 (custom) | catalog_countries | 20 countries |
-| 002 | currencies | 1 (USD) — duplicate with 001 |
-| 002 | providers | 1 (herosms) — duplicate with 001 |
-| 002 | catalog_services | 15 services (includes 4 from 001 + 11 more) |
-| 002 | settings | 1 (subscription_tiers JSON) |
-
-**Issue:** Seed data is duplicated between custom migrations (`db/migrations.py` MIGRATIONS list) and Alembic migration 002. If both run, `ON CONFLICT DO NOTHING` prevents errors, but the duplicate definitions are a maintenance burden.
-
----
-
-## OVERALL DATABASE VERDICT
-
-**PARTIALLY CERTIFIED** — 6 issues found (1 HIGH, 3 MEDIUM, 2 LOW).
-
-The schema design is solid with proper foreign keys, unique constraints, check constraints, and performance indexes. The critical issue is the missing `UNIQUE(user_id)` on `subscriptions` (D1) which will cause runtime failures. The dual migration system (D2) is an architectural concern that should be resolved before production.
-
-**Blocking issues for certification:**
-- D1: Add `UNIQUE(user_id)` to `subscriptions` table
-- D2: Remove `db/migrations.py` or Alembic (keep one)
+*End of Phase D — Database Audit Report*

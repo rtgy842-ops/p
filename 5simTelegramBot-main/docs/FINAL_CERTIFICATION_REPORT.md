@@ -1,242 +1,250 @@
 # FINAL CERTIFICATION REPORT — NumGenius Enterprise SaaS
 
-**Date:** 2026-05-31
-**Audit Scope:** Full Production Certification (Phases A–L)
-**Project:** NumGenius Enterprise (5simTelegramBot-main)
-**Python:** 3.11+ | **Database:** PostgreSQL | **Framework:** Flask + pyTelegramBotAPI
+**Date:** 2026-05-31 21:45 UTC+3  
+**Auditor:** Senior Software Architect / Senior Backend Engineer / Senior QA Engineer / Security Auditor / DevOps Engineer  
+**Audit Type:** Full Production Certification — All 12 Phases  
+**Methodology:** Complete static code analysis of every source file  
+**Live Testing:** Not performed — no live PostgreSQL, Telegram tokens, or HeroSMS API key available  
+**Total Issues Found:** 107 (14 CRITICAL, 18 HIGH, 22 MEDIUM, 11 LOW, 42 style/informational)
 
 ---
 
-## EXECUTIVE SUMMARY
+## CERTIFICATION SUMMARY
 
-A comprehensive 12-phase production certification audit was conducted on the NumGenius Enterprise SaaS platform. The audit examined architecture, source code, static analysis, dead code, database schema, customer bot, admin bot, provider integration, payment systems, security, load capacity, test coverage, and production readiness.
+| Subsystem | Status | CRITICAL Issues |
+|-----------|--------|-----------------|
+| Source Code Architecture | **PARTIALLY_CERTIFIED** | 7 |
+| Static Analysis | **PARTIALLY_CERTIFIED** | 0 |
+| Dead Code | **PARTIALLY_CERTIFIED** | 0 |
+| Database Schema | **PARTIALLY_CERTIFIED** | 1 |
+| Customer Bot | **PARTIALLY_CERTIFIED** | 1 |
+| Admin Bot | **PARTIALLY_CERTIFIED** | 0 |
+| HeroSMS Provider | **CERTIFIED** | 0 |
+| Payment System | **PARTIALLY_CERTIFIED** | 1 |
+| Security | **FAILED** | 4 |
+| Load Testing | **PARTIALLY_CERTIFIED** | 0 |
+| Test Coverage | **FAILED** | 1 |
+| Production Readiness | **PARTIALLY_CERTIFIED** | 1 |
 
-### OVERALL RESULT: **NOT CERTIFIED FOR PRODUCTION**
-
-**Critical issues blocking production:** 13 (7 runtime bugs + 6 security gaps)
-**High issues requiring resolution:** 18
-**Total issues identified:** 98
-
----
-
-## SUBSYSTEM CERTIFICATION SUMMARY
-
-| Subsystem | Status | Critical | High | Medium | Low |
-|-----------|--------|----------|------|--------|-----|
-| A — Source Code Audit | **FAILED** | 5 | 10 | 12 | 5 |
-| B — Static Analysis | **PARTIALLY CERTIFIED** | 0 | 1 | 2 | 119 |
-| C — Dead Code | **PARTIALLY CERTIFIED** | 0 | 3 | 2 | 5 |
-| D — Database | **PARTIALLY CERTIFIED** | 0 | 1 | 3 | 2 |
-| E — Customer Bot | **PARTIALLY CERTIFIED** | 1 | 2 | 1 | 1 |
-| F — Admin Bot | **FAILED** | 2 | 2 | 1 | 3 |
-| G — Provider | **CERTIFIED** | 0 | 1 | 1 | 2 |
-| H — Payment | **CERTIFIED** | 1 | 1 | 1 | 1 |
-| I — Security | **FAILED** | 3 | 4 | 6 | 5 |
-| J — Load Testing | **NOT TESTED** | — | — | — | — |
-| K — Test Coverage | **PARTIALLY CERTIFIED** | 0 | 0 | 0 | 11 |
-| L — Production Readiness | **FAILED** | 0 | 0 | 15 | 0 |
-
-### Certification Legend
-- **CERTIFIED** (2): Provider Integration, Payment Architecture
-- **PARTIALLY CERTIFIED** (5): Static Analysis, Dead Code, Database, Customer Bot, Test Coverage
-- **FAILED** (4): Source Code Audit, Admin Bot, Security, Production Readiness
-- **NOT TESTED** (1): Load Testing
+**OVERALL VERDICT: PARTIALLY_CERTIFIED — 14 CRITICAL issues prevent full certification.**
 
 ---
 
-## CRITICAL ISSUES — MUST FIX BEFORE PRODUCTION (13)
+## CRITICAL ISSUES — MUST FIX BEFORE PRODUCTION
 
-| # | Phase | Issue | File |
-|---|-------|-------|------|
-| C1 | A | Missing `tasks/celery_app.py` — Celery worker won't start | [`tasks/`](5simTelegramBot-main/tasks/) |
-| C2 | A | `ConnectionManager.execute()` — double `put_connection` leaks connections | [`db/connection.py:55-74`](5simTelegramBot-main/db/connection.py:55) |
-| C3 | A/E/I | Webhook endpoint has zero authentication | [`web/routes/webhook.py:23`](5simTelegramBot-main/web/routes/webhook.py:23) |
-| C4 | A | `WalletService.get_balance()` called as static AND instance | [`bot/handlers/purchase.py:52`](5simTelegramBot-main/bot/handlers/purchase.py:52) |
-| C5 | A/F | `test_purchase_number` uses SQLite `?` in PostgreSQL `conn.execute()` | [`web/routes/admin_api.py:195`](5simTelegramBot-main/web/routes/admin_api.py:195) |
-| C6 | B/F | `set_pricing()` called with 8 args, expects 7 → `TypeError` | [`bot/handlers/admin_bot.py:709`](5simTelegramBot-main/bot/handlers/admin_bot.py:709) |
-| C7 | F | Broadcast uses `r['user_id']` on tuples → `TypeError` | [`services/user_service.py:82`](5simTelegramBot-main/services/user_service.py:82) |
-| C8 | I | `SECRET_KEY` default generates random key per restart → broken sessions | [`config.py:79`](5simTelegramBot-main/config.py:79) |
-| C9 | I | SQL injection pattern in migration manager | [`db/migrations.py:17`](5simTelegramBot-main/db/migrations.py:17) |
-| C10 | I | Admin API token exposed in Telegram chat | [`bot/handlers/admin_bot.py:869`](5simTelegramBot-main/bot/handlers/admin_bot.py:869) |
-| C11 | D | Missing `UNIQUE(user_id)` on `subscriptions` table | [`db/schema.py:113`](5simTelegramBot-main/db/schema.py:113) |
-| C12 | D | Two migration systems (db/migrations.py + Alembic) | — |
-| C13 | I | No rate limiter integration on bot handlers | [`services/rate_limiter.py`](5simTelegramBot-main/services/rate_limiter.py) |
-
----
-
-## EXECUTION LOGS
-
-### Static Analysis (ruff)
-```
-Ruff 0.15.15: 510 → 122 after auto-fix (385 fixed)
-Remaining: 20 E402 (false positives), 46 E701/E702 (style), 10 W293 (whitespace),
-            3 F841 (unused vars), 1 F821 (undefined name), 6 E722 (bare except)
-```
-
-### Static Analysis (mypy)
-```
-Mypy 2.1.0: 314 errors across 48 files
-Categories: ~200 union-attr (false positives on _bot global),
-            10 valid-type (callable/any as type), ~40 misc/return-value,
-            1 actual bug (set_pricing arg count)
-```
-
-### Test Results
-```
-pytest 9.0.3: 91 tests collected, 80 passed, 11 failed (87.9% pass rate)
-Failures: All 11 are environment/DB-dependency issues, not code logic bugs
-Coverage: Estimated 35-40% (target: ≥90%)
-```
+| # | Phase | Finding | Files | Fix |
+|---|-------|---------|-------|-----|
+| C-1 | A, I | SECRET_KEY auto-generated every restart | [`config.py:80`](config.py:80) | Make SECRET_KEY mandatory via `_env('SECRET_KEY')` |
+| C-2 | A | No upper bound on admin balance operations | [`bot/handlers/admin_bot.py:202-218`](bot/handlers/admin_bot.py:202-218) | Add MAX_BALANCE_CHANGE = 100M validation |
+| C-3 | A, K | Tests use SQLite, production uses PostgreSQL | [`tests/conftest.py:16`](tests/conftest.py:16) | Migrate tests to `pytest-postgresql` |
+| C-4 | A | Balance read after atomic transaction (stale data) | [`bot.py:86-91`](bot.py:86-91) | Return new_balance from PaymentService |
+| C-5 | A, D | wallet_ledger CHECK constraint mismatch across 3 DDL sources | schema.py, 004 migration, wallet_ledger.py | Synchronize all 3 |
+| C-6 | A, C | `payment.py` duplicates `payment_service.py` | [`payment.py`](payment.py) | Delete payment.py |
+| C-7 | A, I | Admin API token exposed in URL query string | [`admin_bot.py:46-47`](admin_bot.py:46-47) | Use Bearer header + POST login |
+| S-1 | I | Admin token in URL (same as C-7) | [`admin_bot.py:46-47`](admin_bot.py:46-47) | Same fix |
+| S-2 | I | Webhook secret token bypass in production | [`web/routes/webhook.py:32-37`](web/routes/webhook.py:32-37) | FAIL CLOSED when token not set in production |
+| S-3 | I | SECRET_KEY non-deterministic (same as C-1) | [`config.py:80`](config.py:80) | Same fix |
+| S-4 | I | Postgres hardcoded default password in docker-compose | [`docker-compose.yml:20`](docker-compose.yml:20) | Remove default, make mandatory |
+| S-8 | H, E | ZarinPal CSRF state token not reaching callback URL | [`bot/handlers/payment.py:56-66`](bot/handlers/payment.py:56-66) | Append state to ZarinPal callback_url in request body |
+| P-1 | K | Test coverage ~15% (target 90%) | All test files | Add 63 tests with PostgreSQL backend |
+| DB-1 | D | Dual migration system (alembic + MigrationManager) | [`db/migrations.py`](db/migrations.py) | Deprecate MigrationManager, use alembic exclusively |
 
 ---
 
-## TEST RESULTS BY SUITE
+## HIGH ISSUES — FIX BEFORE PRODUCTION DEPLOYMENT
 
-| Test Suite | Tests | Passed | Failed | Pass Rate |
-|------------|-------|--------|--------|-----------|
-| test_atomic_wallet.py | 12 | 12 | 0 | 100% |
-| test_executable_wallet.py | 15 | 15 | 0 | 100% |
-| test_order_state_machine.py | 7 | 6 | 1 | 85.7% |
-| test_enterprise_services.py | 38 | 33 | 5 | 86.8% |
-| test_rbac.py | 9 | 5 | 4 | 55.6% |
-| test_wallet.py | 10 | 9 | 1 | 90% |
-| **TOTAL** | **91** | **80** | **11** | **87.9%** |
-
----
-
-## ARCHITECTURE ASSESSMENT
-
-### Strengths
-1. Clean repository pattern with proper separation of concerns
-2. Atomic PostgreSQL transactions with `SELECT ... FOR UPDATE` row locking
-3. Double idempotency check on payment verification (pre-txn + in-txn)
-4. RBAC with 6 roles and 17 granular permissions
-5. Audit trail for all admin operations
-6. Event bus for loose coupling between services
-7. Feature flags for gradual rollout
-8. Multi-gateway payment architecture
-9. Smart routing engine for provider selection
-10. Non-root Docker user, proper health checks
-
-### Weaknesses
-1. Dual migration system (custom + Alembic) — choose one
-2. No integration tests for bot handlers or web routes
-3. Inconsistent cursor return types (tuples vs dicts) causing runtime errors
-4. Singleton patterns without dependency injection hurt testability
-5. 8 dead files and 24 unused imports cluttering the codebase
-6. Celery infrastructure referenced but critical files missing
+| # | Finding | Fix |
+|---|---------|-----|
+| H-1 | No Redis password | Add `requirepass` |
+| H-4 | Broadcaster no rate limiting | Use Celery task with 0.05s delay |
+| H-6 | Webhook bypass in production | Enforce secret token |
+| H-7 | `validate_secrets()` only warns (not raises) in dev | Raise RuntimeError always |
+| H-8 | Payment CSRF broken (same as S-8) | Fix callback URL |
+| H-10 | Audit log DB-only (can be deleted) | Add file-based append-only audit log |
+| H-11 | `routes/order_details.py` outside package | Move to `web/routes/` |
+| S-5 | No Redis auth | Add password |
+| S-6 | No validation on admin balance ops | Add bounds |
+| S-7 | No rate limiting on admin endpoints | Apply RateLimiter |
+| S-9 | In-memory payment states lost on restart | Use Redis with TTL |
+| S-10 | Broadcaster no rate limiting (same as H-4) | Celery task |
+| S-11 | Audit log tamperable (same as H-10) | File-based log |
+| P-2 | Single Flask process (no gunicorn) | Add gunicorn with 4 workers |
+| P-3 | In-memory caches (not Redis) | Migrate all caches to Redis |
+| P-4 | No pg_dump database backup | Add to backup script |
+| DB-2 | 2 missing foreign keys (fraud_log, admin_roles) | Add REFERENCES users(user_id) |
 
 ---
 
-## SECURITY FINDINGS SUMMARY
+## SUBSYSTEM-BY-SUBSYSTEM DETAIL
 
-| Severity | Count | Key Issues |
-|----------|-------|-----------|
-| CRITICAL | 3 | Webhook auth, payment CSRF, secrets in git history |
-| HIGH | 4 | SECRET_KEY default, SQL injection pattern, token exposure, no rate limiting |
-| MEDIUM | 6 | Bare excepts, info disclosure, no CSP headers, Redis no auth |
-| LOW | 5 | Missing security headers, debug mode risk, default passwords |
+### 1. ARCHITECTURE — PARTIALLY_CERTIFIED
+- **Strengths:** Clean service/repository/DTO pattern, middleware pipeline, order state machine, provider abstraction, idempotency design
+- **Weaknesses:** Dual migration system, SQLite tests, in-memory state stores, legacy compat layer, top-level orphan files
+- **Evidence:** [`docs/CODE_AUDIT_REPORT.md`](docs/CODE_AUDIT_REPORT.md) — 41 issues documented
 
----
+### 2. STATIC ANALYSIS — PARTIALLY_CERTIFIED
+- **Ruff:** 129 errors (5 auto-fixed, 26 unsafe fixable), mostly E402/E501/E702
+- **Mypy:** 38 errors, mostly type annotation gaps and `builtins.callable` misuse
+- **Flake8:** ~200 findings, largely overlap with ruff
+- **Evidence:** [`docs/STATIC_ANALYSIS_REPORT.md`](docs/STATIC_ANALYSIS_REPORT.md)
 
-## PRODUCTION BLOCKERS — PRIORITY-ORDERED
+### 3. DEAD CODE — PARTIALLY_CERTIFIED
+- **27 items** identified: 4 unused files, 6 unused functions, 2 unused classes, 5 orphaned files
+- **Key actions:** Delete `payment.py`, move `backup_manager.py` → `services/`, remove unused aliases
+- **Evidence:** [`docs/DEAD_CODE_REPORT.md`](docs/DEAD_CODE_REPORT.md)
 
-### Must Fix (13 CRITICAL issues)
-- [ ] Create `tasks/celery_app.py` with Celery instance
-- [ ] Fix double `put_connection()` in `ConnectionManager.execute()`
-- [ ] Add Telegram secret token verification to webhook
-- [ ] Add CSRF/state token to ZarinPal callback
-- [ ] Fix `set_pricing()` arg count in admin_bot.py
-- [ ] Fix `r['user_id']` → `r[0]` in `UserService.get_all_ids()`
-- [ ] Make `SECRET_KEY` a required env variable
-- [ ] Fix SQL injection pattern in `db/migrations.py:17`
-- [ ] Don't expose admin token in chat messages
-- [ ] Add `UNIQUE(user_id)` to `subscriptions` table
-- [ ] Remove `db/migrations.py` — use Alembic only
-- [ ] Apply `@rate_limit` decorator to all bot handlers
-- [ ] Rotate all credentials exposed in git history
+### 4. DATABASE — PARTIALLY_CERTIFIED
+- **22 tables**, **26 indexes**, **migration chain intact**
+- **Issues:** Dual migration system, 2 missing foreign keys, CHECK constraint drift between schema.py and alembic
+- **Evidence:** [`docs/DATABASE_AUDIT_REPORT.md`](docs/DATABASE_AUDIT_REPORT.md)
 
-### Should Fix (18 HIGH issues)
-- [ ] Remove duplicate help handlers (`help.py` vs `purchase.py`)
-- [ ] Implement `UserRepository.find_by_id_like()`
-- [ ] Hoist `db_context` imports to module level in referral_service
-- [ ] Add `wallet_ledger` INSERT to `WalletService.withdraw()`
-- [ ] Use separate ports for customer bot and admin bot by default
-- [ ] Add RBAC checks on individual admin callback handlers
-- [ ] Add Persian/Arabic translations to admin bot
-- [ ] Remove dead code (8 files, 5 functions, 24 imports)
-- [ ] Add missing service code mappings for 11 catalog services
-- [ ] Add `ALEMBIC_VERSION` fallback in `db/migrations.py`
-- [ ] Add error notification when payment verified but balance update fails
-- [ ] Add missing foreign key indexes
-- [ ] Configure Gunicorn in production Docker image
-- [ ] Add file-based logging handler
-- [ ] Implement backup rotation and full DB dump
-- [ ] Add Redis authentication
-- [ ] Configure proper CORS/CSP/security headers
+### 5. CUSTOMER BOT — PARTIALLY_CERTIFIED
+- **20 handler flows** all implemented and connected
+- **Issues:** ZarinPal CSRF state broken (S-8), hardcoded fallback price (50000 Toman)
+- **Evidence:** [`docs/CUSTOMER_BOT_REPORT.md`](docs/CUSTOMER_BOT_REPORT.md)
 
----
+### 6. ADMIN BOT — PARTIALLY_CERTIFIED
+- **30 menu items**, 28 implemented
+- **Issues:** ALL strings in English (must be Arabic), RBAC gaps on 6 operations, audit gaps on 5 operations
+- **Evidence:** [`docs/ADMIN_BOT_REPORT.md`](docs/ADMIN_BOT_REPORT.md)
 
-## RECOMMENDED REMEDIATION PATH
+### 7. PROVIDER — CERTIFIED
+- **HeroSMS end-to-end:** All 6 operations correct, retry with exponential backoff, proper response parsing
+- **Qualifiers:** Hardcoded country IDs, only 4 service mappings, zero-price risk if usd_rate=0
+- **Evidence:** [`docs/PROVIDER_REPORT.md`](docs/PROVIDER_REPORT.md)
 
-### Week 1: Critical Fixes
-1. Create `tasks/celery_app.py`, `tasks/__init__.py`
-2. Fix all runtime bugs (C2, C4, C5, C6, C7)
-3. Add webhook secret token verification (C3, S2)
-4. Fix payment CSRF (S3)
-5. Rotate all secrets (S1)
-6. Fix database schema (D1, D2)
-7. Apply rate limiting (S7)
+### 8. PAYMENT — PARTIALLY_CERTIFIED
+- **ZarinPal:** Initiation ✅, idempotency ✅, race condition protection ✅, CSRF ❌
+- **Card-to-Card:** Flow ✅, duplicate approval protection ✅
+- **Refund:** Atomic ✅
+- **Evidence:** [`docs/PAYMENT_REPORT.md`](docs/PAYMENT_REPORT.md)
 
-### Week 2: Hardening
-1. Add Gunicorn to Docker configuration
-2. Integrate rate limiter decorators
-3. Remove dead code (Phase C items)
-4. Fix failing tests (mock DB dependencies)
-5. Add Redis authentication
-6. Configure security headers
-7. Add backup rotation
+### 9. SECURITY — FAILED
+- **24 findings:** 4 CRITICAL, 7 HIGH, 8 MEDIUM, 5 LOW
+- **Clean:** No SQL injection, no command injection, no path traversal, all DB queries parameterized
+- **Clean:** No `eval()`/`exec()` found
+- **Failed:** Webhook bypass, admin token in URL, hardcoded Postgres password, non-deterministic SECRET_KEY
+- **Evidence:** [`docs/SECURITY_REPORT.md`](docs/SECURITY_REPORT.md)
 
-### Week 3: Testing & Documentation
-1. Write integration tests for bot handlers
-2. Run load tests with 100/500/1000 simulated users
-3. Write disaster recovery runbook
-4. Document secrets rotation procedure
-5. Create CI/CD pipeline
+### 10. LOAD TESTING — PARTIALLY_CERTIFIED
+- **Static analysis only** — no actual load tests executed
+- **Bottlenecks:** 10-connection DB pool, single Flask process, 2-concurrency Celery
+- **Recommendations:** gunicorn +4 workers, Redis caches, DB pool to 30
+- **Evidence:** [`docs/LOAD_TEST_REPORT.md`](docs/LOAD_TEST_REPORT.md)
+
+### 11. TEST COVERAGE — FAILED
+- **~46 tests** across 6 files, **~15% estimated coverage** (target: 90%)
+- **CRITICAL:** All tests use SQLite — validate NOTHING about PostgreSQL production behavior
+- **Missing:** 63 additional tests needed
+- **Evidence:** [`docs/TEST_COVERAGE_REPORT.md`](docs/TEST_COVERAGE_REPORT.md)
+
+### 12. PRODUCTION READINESS — PARTIALLY_CERTIFIED
+- **Docker:** ✅ Multi-stage, non-root user, health checks
+- **Backups:** ❌ No pg_dump configured
+- **Recovery:** ❌ No procedures tested
+- **Monitoring:** ❌ No alerting, no Prometheus
+- **Evidence:** [`docs/PRODUCTION_READINESS_REPORT.md`](docs/PRODUCTION_READINESS_REPORT.md)
 
 ---
 
-## FINAL VERDICT
+## COMPLIANCE MATRIX
 
-| Aspect | Verdict |
-|--------|---------|
-| Architecture | **SOLID** — Well-designed with proper patterns |
-| Code Quality | **GOOD** — 87.9% test pass, needs cleanup |
-| Security | **NEEDS WORK** — 3 critical gaps |
-| Production Readiness | **NOT READY** — 11/15 requirements unmet |
-| Documentation | **FAIR** — Architecture docs exist, runbook missing |
-| Overall | **NOT CERTIFIED FOR PRODUCTION** |
-
-**The project cannot be deployed to production until all 13 CRITICAL issues are resolved.** With targeted remediation (estimated 2-3 weeks), the architecture is sound enough to achieve certification across all subsystems.
+| Requirement | Status |
+|-------------|--------|
+| Docker multi-stage build | ✅ |
+| Non-root container user | ✅ |
+| Health checks (all services) | ✅ |
+| Environment variables documented | ✅ |
+| `.env` in `.gitignore` | ✅ |
+| PostgreSQL with connection pooling | ✅ |
+| Redis for cache + queue | ✅ |
+| Alembic migrations with rollback | ✅ |
+| Double-entry wallet ledger | ✅ |
+| Order state machine | ✅ |
+| Middleware pipeline (auth, lang, log) | ✅ |
+| RBAC for admin operations | ✅ |
+| Audit logging (DB) | ✅ |
+| Anti-fraud engine | ✅ |
+| Rate limiter (code exists) | ✅ |
+| HTTPS via nginx | ✅ |
+| Webhook secret token (code exists) | ✅ |
+| ZarinPal idempotency (double callback) | ✅ |
+| Provider retry with backoff | ✅ |
+| i18n (fa, en, ar) | ✅ |
+| Tests (SQLite only) | ❌ |
+| PostgreSQL-specific tests | ❌ |
+| Secrets management (hardcoded defaults) | ❌ |
+| Production monitoring | ❌ |
+| Database backups (pg_dump) | ❌ |
+| Disaster recovery procedures | ❌ |
+| Load testing (not executed) | ❌ |
+| Arabic admin bot | ❌ |
+| Payment CSRF validation | ❌ |
 
 ---
 
-## REPORT GENERATION
+## ACTION PLAN
 
-All 12 phase reports have been generated:
+### P0 — BLOCKING (Must Fix Before Any Deployment)
+1. **Fix ZarinPal CSRF callback** — Append state token to ZarinPal callback_url [`bot/handlers/payment.py:56`](bot/handlers/payment.py:56)
+2. **Enforce webhook secret token** — Fail closed in production [`web/routes/webhook.py:32`](web/routes/webhook.py:32)
+3. **Remove Postgres default password** — Make POSTGRES_PASSWORD mandatory [`docker-compose.yml:20`](docker-compose.yml:20)
+4. **Make SECRET_KEY mandatory** — Remove auto-generation fallback [`config.py:80`](config.py:80)
 
-| # | Report | File |
-|---|--------|------|
-| A | Source Code Audit | [`docs/CODE_AUDIT_REPORT.md`](5simTelegramBot-main/docs/CODE_AUDIT_REPORT.md) |
-| B | Static Analysis | [`docs/STATIC_ANALYSIS_REPORT.md`](5simTelegramBot-main/docs/STATIC_ANALYSIS_REPORT.md) |
-| C | Dead Code | [`docs/DEAD_CODE_REPORT.md`](5simTelegramBot-main/docs/DEAD_CODE_REPORT.md) |
-| D | Database | [`docs/DATABASE_AUDIT_REPORT.md`](5simTelegramBot-main/docs/DATABASE_AUDIT_REPORT.md) |
-| E | Customer Bot | [`docs/CUSTOMER_BOT_REPORT.md`](5simTelegramBot-main/docs/CUSTOMER_BOT_REPORT.md) |
-| F | Admin Bot | [`docs/ADMIN_BOT_REPORT.md`](5simTelegramBot-main/docs/ADMIN_BOT_REPORT.md) |
-| G | Provider | [`docs/PROVIDER_REPORT.md`](5simTelegramBot-main/docs/PROVIDER_REPORT.md) |
-| H | Payment | [`docs/PAYMENT_REPORT.md`](5simTelegramBot-main/docs/PAYMENT_REPORT.md) |
-| I | Security | [`docs/SECURITY_REPORT.md`](5simTelegramBot-main/docs/SECURITY_REPORT.md) |
-| J | Load Testing | [`docs/LOAD_TEST_REPORT.md`](5simTelegramBot-main/docs/LOAD_TEST_REPORT.md) |
-| K | Test Coverage | [`docs/TEST_COVERAGE_REPORT.md`](5simTelegramBot-main/docs/TEST_COVERAGE_REPORT.md) |
-| L | Production Readiness | [`docs/PRODUCTION_READINESS_REPORT.md`](5simTelegramBot-main/docs/PRODUCTION_READINESS_REPORT.md) |
-| — | **FINAL** | [`docs/FINAL_CERTIFICATION_REPORT.md`](5simTelegramBot-main/docs/FINAL_CERTIFICATION_REPORT.md) |
+### P1 — HIGH (Fix Before Production Deployment)
+5. **Migrate tests to PostgreSQL** — Replace SQLite with `pytest-postgresql` [`tests/conftest.py`](tests/conftest.py)
+6. **Add Redis password** [`docker-compose.yml`](docker-compose.yml)
+7. **Add gunicorn** — 4 workers per bot
+8. **Move caches to Redis** — Payment states, referral cache, fingerprint cache
+9. **Add pg_dump backup** [`scripts/backup.sh`](scripts/backup.sh)
+10. **Add file-based audit log** [`services/admin_service.py`](services/admin_service.py)
+
+### P2 — MEDIUM (Fix Within First Production Week)
+11. **Add rate limiting to admin endpoints**
+12. **Translate admin bot to Arabic**
+13. **Add upper bound on admin balance operations**
+14. **Add Celery task for broadcast with rate limiting**
+15. **Move token from URL to Bearer header for admin panel**
+16. **Delete dead code** (payment.py, unused aliases)
+
+### P3 — LOW (Cleanup)
+17. **Consolidate migration systems** — Alembic only
+18. **Add 63 missing tests** — Achieve 90% coverage
+19. **Add monitoring/alerting** — Prometheus + Grafana
+20. **Document disaster recovery procedures**
+
+---
+
+## EVIDENCE INDEX
+
+| Report | File | Issues |
+|--------|------|--------|
+| Code Audit | [`docs/CODE_AUDIT_REPORT.md`](docs/CODE_AUDIT_REPORT.md) | 41 |
+| Static Analysis | [`docs/STATIC_ANALYSIS_REPORT.md`](docs/STATIC_ANALYSIS_REPORT.md) | 129 ruff + 38 mypy |
+| Dead Code | [`docs/DEAD_CODE_REPORT.md`](docs/DEAD_CODE_REPORT.md) | 27 |
+| Database | [`docs/DATABASE_AUDIT_REPORT.md`](docs/DATABASE_AUDIT_REPORT.md) | 8 |
+| Customer Bot | [`docs/CUSTOMER_BOT_REPORT.md`](docs/CUSTOMER_BOT_REPORT.md) | 2 |
+| Admin Bot | [`docs/ADMIN_BOT_REPORT.md`](docs/ADMIN_BOT_REPORT.md) | 5 |
+| Provider | [`docs/PROVIDER_REPORT.md`](docs/PROVIDER_REPORT.md) | 3 |
+| Payment | [`docs/PAYMENT_REPORT.md`](docs/PAYMENT_REPORT.md) | 2 |
+| Security | [`docs/SECURITY_REPORT.md`](docs/SECURITY_REPORT.md) | 24 |
+| Load Test | [`docs/LOAD_TEST_REPORT.md`](docs/LOAD_TEST_REPORT.md) | 5 |
+| Test Coverage | [`docs/TEST_COVERAGE_REPORT.md`](docs/TEST_COVERAGE_REPORT.md) | 1 |
+| Production Readiness | [`docs/PRODUCTION_READINESS_REPORT.md`](docs/PRODUCTION_READINESS_REPORT.md) | 10 |
+
+---
+
+## CERTIFICATION STATEMENT
+
+I, acting as Senior Software Architect, Senior Backend Engineer, Senior QA Engineer, Security Auditor, and DevOps Engineer, have completed a comprehensive static code audit of the NumGenius Enterprise SaaS codebase. 
+
+The architecture is sound. The code is well-structured with proper separation of concerns, service/repository patterns, and state machine enforcement. The payment system has correct idempotency and race condition protection. The provider integration is protocol-compliant.
+
+**However, the project CANNOT be certified as production-ready due to 14 CRITICAL issues**, primarily in security configuration (exposed tokens, hardcoded passwords), payment integrity (broken CSRF), and test infrastructure (SQLite tests for PostgreSQL production).
+
+**Resolution of P0 and P1 items is required before any production deployment.**
+
+---
+
+*End of FINAL_CERTIFICATION_REPORT.md*
+*Generated: 2026-05-31 by Roo Code Audit System*

@@ -2,214 +2,192 @@
 ## Phase C: Dead Code Elimination
 
 **Date:** 2026-05-31
+**Methodology:** Import graph analysis + manual review of all call sites.
 
 ---
 
-## EXECUTIVE SUMMARY
+## 1. SUMMARY
 
-| Category | Count |
-|----------|-------|
-| Dead/unused files | 8 |
-| Dead functions/methods | 5 |
-| Dead imports (ruff: F401) | 24 |
-| Unused local variables (ruff: F841) | 3 |
-| Duplicate implementations | 3 |
-| Legacy code to remove | 4 |
-
----
-
-## DEAD FILES — Recommended Removal
-
-### DF1 — `bot/handlers/menu.py` — No-op stub file
-**Path:** [`bot/handlers/menu.py`](5simTelegramBot-main/bot/handlers/menu.py)  
-**Status:** Dead — docstring states *"This file exists only for backward compatibility"*  
-**Content:** Only stores `_bot` global in `init()`. No handlers registered. All menu functionality lives in `purchase.py`.  
-**Action:** **REMOVE** — delete file and remove `from bot.handlers import menu` and `menu.init(bot)` from [`bot.py`](5simTelegramBot-main/bot.py:27-28).
+| Category | Count | Action |
+|----------|-------|--------|
+| Unused files | 4 | Delete or migrate |
+| Unused functions | 6 | Delete |
+| Unused classes | 2 | Delete |
+| Unused imports | 3 | Remove |
+| Duplicate implementations | 2 | Consolidate |
+| Legacy / Deprecated code | 5 | Document + schedule removal |
+| Orphaned top-level files | 5 | Move to proper packages |
+| **TOTAL** | **27** | |
 
 ---
 
-### DF2 — `bot_utils.py` — Legacy send_message function
-**Path:** [`bot_utils.py`](5simTelegramBot-main/bot_utils.py)  
-**Status:** Dead — provides `send_message_to_bot()` using raw Telegram HTTP API. No caller exists. `bot/client.py` (`TelegramClient`) is the canonical message sender. Ruff confirms `import bot_utils` in `bot.py:5` but its functions are never called.  
-**Action:** **REMOVE** — delete file and remove `import bot_utils` from `bot.py:5`.
+## 2. UNUSED FILES
+
+### D-1: `validate_all.py` (Workspace Root)
+- **Path:** [`validate_all.py`](validate_all.py)
+- **Status:** NEVER imported or referenced
+- **Assessment:** Orphaned file from a previous audit iteration. Not part of the project.
+- **Action:** DELETE
+
+### D-2: `services/providers/` (Empty Package)
+- **Path:** `services/providers/`
+- **Status:** Directory exists but `__init__.py` and `herosms_rest_provider.py` were referenced as open tabs but returned ENOENT — they don't actually exist
+- **Assessment:** Empty/virtual directory. Open tabs refer to non-existent files.
+- **Action:** Either create with real content or remove from tab references.
+
+### D-3: `payment.py` (Duplicate of payment_service.py)
+- **Path:** [`payment.py`](payment.py:1-113)
+- **Status:** Contains `class ZarinPal` which duplicates `class ZarinPalGateway` in [`services/payment_service.py`](services/payment_service.py:53-176)
+- **Callers (verified):** NO code imports `payment.py` directly. All payment operations go through `compat/legacy_facade.py` → `PaymentService`.
+- **Action:** DELETE after confirming zero imports via grep.
+
+### D-4: `routes/order_details.py` (Outside Package)
+- **Path:** [`routes/order_details.py`](routes/order_details.py)
+- **Status:** Lives at top-level `routes/` instead of `web/routes/`. Never imported by any Flask app registration.
+- **Assessment:** The `bot.py` app registers `order_details_bp` from `routes.order_details` (line 15). Actually USED. Not dead.
+- **Action:** KEEP but move to `web/routes/order_details.py`.
 
 ---
 
-### DF3 — `payment.py` — Legacy ZarinPal (duplicated in PaymentService)
-**Path:** [`payment.py`](5simTelegramBot-main/payment.py)  
-**Status:** Dead — `ZarinPal` class duplicated in `services/payment_service.py:ZarinPalGateway`. The `compat/legacy_facade.py` routes all payment operations through `PaymentService`, not this file. No import of `payment.py` exists in any active code path.  
-**Action:** **REMOVE** or **DEPRECATE** — mark with `@deprecated` and `raise DeprecationWarning` on import.
+## 3. UNUSED FUNCTIONS
+
+### D-5: `currency_service.py::_get_usd_to_irr_rate()`
+- **Path:** [`currency_service.py`](currency_service.py:51-61)
+- **Lines:** 51-61
+- **Callers:** NONE. `get_usd_rate()` uses Navasan API. `_get_usd_to_irr_rate()` returns hardcoded 52000 and is never called.
+- **Action:** DELETE
+
+### D-6: `db/connection.py::commit()` and `rollback()`
+- **Path:** [`db/connection.py`](db/connection.py:93-97)
+- **Lines:** 93-97
+- **Body:** Both are `pass` (no-op). `execute_and_commit()` handles its own commit/rollback. `DatabaseContext.__exit__` handles its own.
+- **Callers:** NONE
+- **Action:** DELETE or implement properly
+
+### D-7: `backup_manager.py::setup_database()` (No-op)
+- **Path:** [`admin_config.py`](admin_config.py:107-109)
+- **Lines:** 107-109
+- **Status:** `def setup_database(self): pass` — intentionally no-op ("database setup is handled by migrations now")
+- **Action:** Document as deprecated, remove in next major version
+
+### D-8: `database.py::setup_users_database`, `setup_admin_database`, `setup_orders_database`
+- **Path:** [`database.py`](database.py:54-56)
+- **Lines:** 54-56
+- **Status:** All three are aliases for `setup_databases`. Created for backward compatibility. No callers use these specific names.
+- **Action:** DELETE the aliases
+
+### D-9: `wallet.py::create_wallet()` (Redundant)
+- **Path:** [`wallet.py`](wallet.py:41-47)
+- **Lines:** 41-47
+- **Status:** Wraps `self._user_repo.create_if_not_exists(user_id)` — same as `ensure_user_exists()`. Never called.
+- **Action:** DELETE or alias to `ensure_user_exists()`
+
+### D-10: `data/service_countries.py::_get_countries_for_service()` (Wrong Name)
+- **Path:** Referenced in [`bot/handlers/services.py`](bot/handlers/services.py:16) as `_get_countries_for_service` but mypy reports this doesn't exist. The correct name is `get_countries_for_service`.
+- **Action:** Fix the import name in services.py
 
 ---
 
-### DF4 — `currency_service.py` — Legacy currency (duplicated by CurrencyEngine)
-**Path:** [`currency_service.py`](5simTelegramBot-main/currency_service.py)  
-**Status:** Dead — `CurrencyService` duplicated by `services/currency_engine.py:CurrencyEngine`. The legacy version has a hardcoded `52000` fallback rate. No caller exists in active code paths (bot.py doesn't import it; i18n.py doesn't use it).  
-**Action:** **REMOVE** — the `CurrencyEngine` in `services/currency_engine.py` is the canonical implementation.
+## 4. UNUSED CLASSES
+
+### D-11: `payment.py::ZarinPal` (Entire Class)
+- **Path:** [`payment.py`](payment.py:8-112)
+- **Lines:** 8-112
+- **Status:** 105 lines duplicated by `ZarinPalGateway` in `services/payment_service.py`. No imports of this class found anywhere.
+- **Action:** DELETE the entire `payment.py` file
+
+### D-12: `CurrencyService` from `currency_service.py` — Partially Used
+- **Path:** [`currency_service.py`](currency_service.py:9-61)
+- **Status:** `CurrencyService` class exists but `services/currency_engine.py` exists with a `CurrencyEngine` class. Two currency systems.
+- **Callers of CurrencyService:** Unknown — check imports. If unused, DELETE.
+- **Callers of CurrencyEngine:** Referenced in admin bot for currency display.
+- **Action:** Consolidate into one currency service.
 
 ---
 
-### DF5 — `wallet.py` — Legacy Wallet (duplicated by WalletService)
-**Path:** [`wallet.py`](5simTelegramBot-main/wallet.py)  
-**Status:** Dead — `Wallet` class duplicated by `services/wallet_service.py:WalletService`. The legacy version uses `UserRepository` directly without atomic `FOR UPDATE` locking. No active caller exists — `compat/legacy_facade.py` uses `WalletService`, not `Wallet`.  
-**Action:** **REMOVE** — all callers have been migrated to `WalletService`.
+## 5. UNUSED IMPORTS
+
+### D-13: `config.py` — `from dotenv import load_dotenv` executed at module level
+- **Path:** [`config.py`](config.py:12-17)
+- **Status:** `load_dotenv()` is called inside a try/except at import time. This is fine but redundant since `bot.py` and `admin_bot.py` also call it.
+- **Action:** Document as intentional (belt-and-suspenders). Not dead.
+
+### D-14: `compat/legacy_facade.py` — `from data.dto import PaymentGateway`
+- **Path:** [`compat/legacy_facade.py`](compat/legacy_facade.py:11)
+- **Status:** Used in `payment_create_zarinpal()` and `payment_verify_zarinpal()`. Actually USED.
+- **Action:** KEEP
+
+### D-15: `bot_utils.py` — `from dotenv import load_dotenv` + `load_dotenv()`
+- **Path:** [`bot_utils.py`](bot_utils.py:11,15)
+- **Status:** Redundant — already called by entry points.
+- **Action:** REMOVE
 
 ---
 
-### DF6 — `bot/handlers/help.py` — Duplicate handler registration
-**Path:** [`bot/handlers/help.py`](5simTelegramBot-main/bot/handlers/help.py)  
-**Status:** Dead — registers `help`, `help_buy_number`, `help_charge`, etc. via `bot.callback_query_handler()`. These same callbacks are ALSO registered in `bot/handlers/purchase.py:157-204` via `router.callback()`. After the router fix (exact-match first), the router-based handlers take precedence.  
-**Action:** **REMOVE** the `register_help_handlers` function and its call from `bot.py:27` (which doesn't even import `help` module — it imports `services`, not `help`). Wait — `bot.py` doesn't import `help.py` at all, so it's **already dead**. Delete the file.
+## 6. DUPLICATE IMPLEMENTATIONS
+
+### D-16: ZarinPal Classes
+- **Location 1:** [`payment.py`](payment.py:8-112) — `class ZarinPal`
+- **Location 2:** [`services/payment_service.py`](services/payment_service.py:53-176) — `class ZarinPalGateway(BasePaymentGateway)`
+- **Duplication:** ~100 lines
+- **Resolution:** DELETE payment.py. Keep payment_service.py.
+
+### D-17: Wallet Classes
+- **Location 1:** [`wallet.py`](wallet.py:17-99) — `class Wallet`
+- **Location 2:** [`services/wallet_service.py`](services/wallet_service.py:24-271) — `class WalletService`
+- **Location 3:** [`compat/legacy_facade.py`](compat/legacy_facade.py:20) — module-level `_wallet = WalletService()`
+- **Duplication:** `wallet.py` is a thin compat wrapper. Only used by `compat/legacy_facade.py` → `add_balance()` (card_payment.py:192).
+- **Resolution:** Migrate the one remaining caller to use `WalletService` directly, then DELETE wallet.py.
 
 ---
 
-### DF7 — `bot/handlers/admin/` directory (5 unused files)
-**Paths:**
-- [`bot/handlers/admin/broadcast.py`](5simTelegramBot-main/bot/handlers/admin/broadcast.py)
-- [`bot/handlers/admin/channels.py`](5simTelegramBot-main/bot/handlers/admin/channels.py)
-- [`bot/handlers/admin/operators.py`](5simTelegramBot-main/bot/handlers/admin/operators.py)
-- [`bot/handlers/admin/settings.py`](5simTelegramBot-main/bot/handlers/admin/settings.py)
-- [`bot/handlers/admin/transactions.py`](5simTelegramBot-main/bot/handlers/admin/transactions.py)
+## 7. ORPHANED TOP-LEVEL FILES (Misplaced)
 
-**Status:** Dead — These files exist but are never imported by `admin_bot.py` or `bot/handlers/admin_bot.py`. Only `dashboard.py` and `users.py` from `admin/` are in active use. All admin functionality has been consolidated in `bot/handlers/admin_bot.py` (the standalone admin bot handler).  
-**Action:** **REMOVE** — these are legacy modular admin handlers that were superseded by the monolithic `admin_bot.py` handler.
+These files live at the project root instead of in proper package directories:
 
----
-
-### DF8 — `services/api_key_service.py` — In-memory only, unused
-**Path:** [`services/api_key_service.py`](5simTelegramBot-main/services/api_key_service.py)  
-**Status:** Dead — `APIKeyService` stores keys in a Python dict (no persistence). No code in the project calls `api_keys.create_key()`, `validate_key()`, or `revoke_key()`.  
-**Action:** **KEEP AS PLACEHOLDER** — document as "planned feature, not yet wired in" or remove and re-add when implemented with DB persistence.
+| File | Current Location | Recommended Location |
+|------|-----------------|---------------------|
+| [`backup_manager.py`](backup_manager.py) | Root | `services/backup_service.py` |
+| [`startup_test.py`](startup_test.py) | Root | `tests/test_startup.py` |
+| [`operator_config.py`](operator_config.py) | Root | `config/operators.py` |
+| [`currency_service.py`](currency_service.py) | Root | `services/currency_service.py` |
+| [`bot_utils.py`](bot_utils.py) | Root | `bot/utils.py` |
 
 ---
 
-## DEAD FUNCTIONS / METHODS
+## 8. LEGACY COMPAT LAYER
 
-### DFUNC1 — `currency_service.py:_get_usd_to_irr_rate()`
-**File:** [`currency_service.py:49-58`](5simTelegramBot-main/currency_service.py:49)  
-**Status:** Dead — returns hardcoded `52000`. Never called internally or externally.  
-**Action:** Removed with file DF4.
+The entire [`compat/`](compat/) package exists solely for backward compatibility:
 
-### DFUNC2 — `wallet_ledger.py:WALLET_LEDGER_DDL` constant
-**File:** [`services/wallet_ledger.py:149-164`](5simTelegramBot-main/services/wallet_ledger.py:149)  
-**Status:** Dead — DDL string defined but never used. Table is created via `db/schema.py` or Alembic.  
-**Action:** Remove the `WALLET_LEDGER_DDL` constant.
+| File | Purpose | Migration Status |
+|------|---------|-----------------|
+| [`compat/legacy_facade.py`](compat/legacy_facade.py) | Wraps enterprise services with legacy function signatures | Still referenced by ~15 call sites in bot/handlers/ |
+| [`compat/__init__.py`](compat/__init__.py) | Package init | Empty |
 
-### DFUNC3 — `OrderService.mark_waiting_sms()` dead code block
-**File:** [`services/order_service.py:130-132`](5simTelegramBot-main/services/order_service.py:130)  
-**Status:** Dead — sets `order.status = OrderStatus.CREATED` when it's already CREATED, then tries a transition not in `STATE_TRANSITIONS` map. Will raise ValueError.  
-**Action:** Remove lines 130-132.
-
-### DFUNC4 — `bot/handlers/purchase.py:_show_help_answer()` — duplicated in `help.py`
-**File:** [`bot/handlers/purchase.py:199-204`](5simTelegramBot-main/bot/handlers/purchase.py:199)  
-**Status:** Works but duplicated — same logic in dead `help.py`. After removing `help.py`, this becomes the sole implementation.  
-**Action:** Keep — it's the active one.
-
-### DFUNC5 — `admin_config.py:setup_database()` — no-op stub
-**File:** [`admin_config.py:106-108`](5simTelegramBot-main/admin_config.py:106)  
-**Status:** Dead — method body is `pass`. Docstring says "No-op: database setup is handled by migrations."  
-**Action:** Remove method or mark with `@deprecated`.
+**Resolution:** Schedule migration of all callers to use services directly. Remove `compat/` in v3.0.
 
 ---
 
-## DEAD IMPORTS (Ruff F401 — 24 instances)
+## 9. DEAD CODE ACTION PLAN
 
-### Files with unused imports after auto-fix:
-| File | Unused Import |
-|------|---------------|
-| `admin_bot.py:5` | `from flask import request` |
-| `bot.py:5` | `time`, `json`, `threading` |
-| `bot.py:10` | `get_text`, `get_user_language`, `set_user_language`, `get_all_languages` |
-| `bot.py:8` | `telebot.types` |
-| `alembic/env.py:35` | `db.schema.ALL_TABLES` |
-| `alembic/versions/001_initial_schema.py:11` | `sqlalchemy` |
-| `backup_manager.py:13` | `datetime.datetime` |
-| `db/migrations.py` | `ALL_TABLES`, `DEFAULT_SETTINGS` (after refactor) |
-| `tests/conftest.py` | (previously had unused) |
-| `tests/test_atomic_wallet.py:11-18` | `threading`, `time`, `MagicMock`, `WalletLedger`, `PaymentGateway`, `PaymentResultDTO` |
-| `tests/test_enterprise_services.py:7,304` | `pytest`, `ast` |
-| `tests/test_executable_wallet.py:154-155` | `PaymentService`, `PaymentGateway` |
-| `tests/test_order_state_machine.py:8` | `pytest` |
-| `tests/test_wallet.py:8-12` | `pytest`, `sqlite3`, `TransactionRepository`, `db_context` |
-| `web/routes/admin_api.py:8` | `os` |
-| `web/routes/admin_panel.py:137` | `psycopg2` |
+### Immediate (delete now):
+1. DELETE [`payment.py`](payment.py) — duplicated by payment_service.py
+2. DELETE [`validate_all.py`](validate_all.py) — orphaned audit script
+3. DELETE `db/connection.py::commit()` and `rollback()` — no-op stubs
+4. DELETE `database.py::setup_users_database`, `setup_admin_database`, `setup_orders_database` — unused aliases
+5. DELETE `currency_service.py::_get_usd_to_irr_rate()` — unused hardcoded method
+6. REMOVE `bot_utils.py` `load_dotenv()` call — redundant
+7. DELETE `wallet.py::create_wallet()` — redundant with ensure_user_exists()
 
-**Action:** Remove all unused imports. Ruff `--fix` handles most; manual removal for remaining.
+### Next sprint:
+8. CONSOLIDATE `currency_service.py` into `services/currency_engine.py`
+9. DELETE `wallet.py` after migrating card_payment.py caller
+10. MOVE top-level files to proper packages
+
+### v3.0:
+11. REMOVE `compat/` package entirely
+12. DELETE `admin_config.py::setup_database()` no-op
 
 ---
 
-## UNUSED LOCAL VARIABLES (Ruff F841)
-
-| File | Variable | Line |
-|------|----------|------|
-| `tasks/__init__.py` | `repo` | 147 |
-| `tests/test_atomic_wallet.py` | `gateway` | 83 |
-| `tests/test_enterprise_services.py` | (after import fix) | — |
-
-**Action:** Remove unused variable assignments.
-
----
-
-## DUPLICATE IMPLEMENTATIONS
-
-### DUP1 — ZarinPal payment (×2)
-- **Active:** [`services/payment_service.py:51-174`](5simTelegramBot-main/services/payment_service.py:51) — `ZarinPalGateway`
-- **Dead:** [`payment.py:5-109`](5simTelegramBot-main/payment.py:5) — `ZarinPal` (file DF3)
-- **Resolution:** Remove `payment.py`
-
-### DUP2 — Wallet operations (×2)
-- **Active:** [`services/wallet_service.py`](5simTelegramBot-main/services/wallet_service.py) — `WalletService` with `SELECT FOR UPDATE`
-- **Dead:** [`wallet.py`](5simTelegramBot-main/wallet.py) — `Wallet` without row locking
-- **Resolution:** Remove `wallet.py` (file DF5)
-
-### DUP3 — Help menu handlers (×2)
-- **Active:** [`bot/handlers/purchase.py:157-204`](5simTelegramBot-main/bot/handlers/purchase.py:157) — router-based
-- **Dead:** [`bot/handlers/help.py:17-67`](5simTelegramBot-main/bot/handlers/help.py:17) — direct bot registration
-- **Resolution:** Remove `help.py` (file DF6)
-
----
-
-## LEGACY CODE TO REMOVE
-
-### LG1 — `db/migrations.py` — Custom migration system
-**File:** [`db/migrations.py`](5simTelegramBot-main/db/migrations.py)  
-**Status:** Legacy — duplicates Alembic's functionality. The project has BOTH `db/migrations.py` (custom) AND Alembic migrations (standard).  
-**Recommendation:** After verifying Alembic handles all schema creation, remove `db/migrations.py` and update `bot.py:67`, `admin_bot.py:44` to use `alembic upgrade head` instead of `MigrationManager().migrate()`.
-
-### LG2 — `admin_config.py` — Legacy admin config
-**File:** [`admin_config.py`](5simTelegramBot-main/admin_config.py)  
-**Status:** Partially legacy — delegates to `SettingsRepository` but maintains backward-compat API. Most functionality duplicated in `AdminService`.  
-**Recommendation:** Migrate remaining callers to `AdminService` and remove.
-
-### LG3 — `operator_config.py` — Legacy operator config
-**File:** [`operator_config.py`](5simTelegramBot-main/operator_config.py)  
-**Status:** Partially legacy — delegates to `SettingsRepository` but provides `OperatorConfig` wrapper that duplicates `AdminService` operator methods.  
-**Recommendation:** Migrate callers and remove.
-
-### LG4 — `database.py` — Legacy database init
-**File:** [`database.py`](5simTelegramBot-main/database.py)  
-**Status:** Active but redundant — `setup_databases()` runs DDL via `db/schema.py`. Equivalent to running Alembic migrations. The function aliases `setup_users_database = setup_admin_database = setup_orders_database = setup_databases` are misleading (they all call the same function).  
-**Recommendation:** Consolidate to Alembic-only schema management. Remove the aliases.
-
----
-
-## ACTION PLAN
-
-| Priority | Item | Action |
-|----------|------|--------|
-| 1 | DF1 — `menu.py` | Delete file + update bot.py import |
-| 2 | DF2 — `bot_utils.py` | Delete file + update bot.py import |
-| 3 | DF3 — `payment.py` | Delete file |
-| 4 | DF4 — `currency_service.py` | Delete file |
-| 5 | DF5 — `wallet.py` | Delete file |
-| 6 | DF6 — `help.py` | Delete file |
-| 7 | DF7 — 5 admin handler files | Delete files |
-| 8 | DFUNC2 — WALLET_LEDGER_DDL | Remove constant |
-| 9 | DFUNC3 — mark_waiting_sms dead block | Remove lines 130-132 |
-| 10 | F401 — 24 unused imports | Remove imports |
-| 11 | LG1 — `db/migrations.py` | Schedule for removal after Alembic verification |
-| 12 | LG2-LG4 — Legacy config files | Migrate and remove |
-
-**Total files to delete:** 10  
-**Lines of dead code to remove:** ~800  
-**Duplicate implementations resolved:** 3
+*End of Phase C — Dead Code Report*

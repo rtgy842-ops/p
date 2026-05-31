@@ -1,143 +1,176 @@
 # PRODUCTION READINESS REPORT — NumGenius Enterprise SaaS
-## Phase L: Production Readiness
+## Phase L: Production Deployment Verification
 
 **Date:** 2026-05-31
-**Status:** NOT PRODUCTION READY
+**Status:** STATIC ANALYSIS of deployment infrastructure
 
 ---
 
-## DOCKER / CONTAINERIZATION
+## 1. DOCKER
 
-### Dockerfile
-**File:** [`Dockerfile`](5simTelegramBot-main/Dockerfile)
+| Component | File | Status |
+|-----------|------|--------|
+| Multi-stage Dockerfile | [`Dockerfile`](Dockerfile) | ✅ Build + Production stages |
+| Non-root user | `USER botuser` | ✅ Line 40 |
+| Health check | `HEALTHCHECK curl /ping` | ✅ Line 49 |
+| Python unbuffered | `PYTHONUNBUFFERED=1` | ✅ Line 44 |
+| Path configured | `PYTHONPATH=/app` | ✅ Line 45 |
 
-| Check | Status | Notes |
-|-------|--------|-------|
-| Multi-stage build | ✅ | Builder stage compiles deps, production stage copies |
-| Non-root user | ✅ | `botuser` created with group |
-| Minimal base image | ✅ | `python:3.11-slim-bookworm` |
-| Health check | ✅ | `curl -f http://localhost:5000/ping` |
-| PYTHONUNBUFFERED | ✅ | Set for real-time logging |
-| Proper layer caching | ✅ | requirements.txt copied before source |
-| **Missing:** Gunicorn | ❌ | Uses `python bot.py` directly — single worker |
-
-### Docker Compose
-**File:** [`docker-compose.yml`](5simTelegramBot-main/docker-compose.yml)
-
-| Service | Status | Issues |
-|---------|--------|--------|
-| postgres (16-alpine) | ✅ | Health check, volume, proper restart |
-| redis (7-alpine) | ✅ | Append-only, 256MB max, health check |
-| customer_bot | ⚠️ | Uses `python bot.py` not Gunicorn; references files not built |
-| admin_bot | ⚠️ | Same as customer_bot |
-| worker (Celery) | ❌ | References `tasks` module — `tasks/celery_app.py` DOESN'T EXIST |
-| beat (Celery Beat) | ❌ | Same as worker — Celery app missing |
+### Issues
+- **MISSING:** No `.dockerignore` entries for `.git`, `__pycache__`, `*.pyc`, `.env`
+- **OK:** `requirements.txt` copied and installed in builder stage. ✅
 
 ---
 
-## ENVIRONMENT VARIABLES
+## 2. DOCKER COMPOSE
 
-### `.env.example` Coverage
-**File:** [`.env.example`](5simTelegramBot-main/.env.example)
+| Component | File | Status |
+|-----------|------|--------|
+| PostgreSQL 16 | [`docker-compose.yml:15`](docker-compose.yml:15) | ✅ |
+| Redis 7 | [`docker-compose.yml:34`](docker-compose.yml:34) | ✅ |
+| Customer Bot | [`docker-compose.yml:52`](docker-compose.yml:52) | ✅ Port 5001:5000 |
+| Admin Bot | [`docker-compose.yml:77`](docker-compose.yml:77) | ✅ Port 5002:5000 |
+| Celery Worker | [`docker-compose.yml:103`](docker-compose.yml:103) | ✅ |
+| Celery Beat | [`docker-compose.yml:120`](docker-compose.yml:120) | ✅ |
+| Health checks | postgres, redis have health checks | ✅ |
+| Depends on | Customer/Admin → Redis healthy + PostgreSQL healthy | ✅ |
+| Profiles | `full`, `customer`, `admin`, `worker` | ✅ |
 
-| Required Variable | In .env.example | Has Default | Sensitive |
-|------------------|-----------------|-------------|-----------|
-| BOT_TOKEN | ✅ | No | YES |
-| ADMIN_BOT_TOKEN | ✅ | No | YES |
-| ADMIN_IDS | ✅ | No | YES |
-| WEBHOOK_URL | ✅ | No | — |
-| HEROSMS_API_KEY | ✅ | No | YES |
-| ZARINPAL_MERCHANT | ✅ | No | YES |
-| NAVASAN_API_KEY | ✅ | No | YES |
-| DATABASE_URL | ✅ | Yes (compose) | YES |
-| POSTGRES_PASSWORD | ✅ | Yes (compose) | YES |
-| CELERY_BROKER_URL | ✅ | Yes (compose) | — |
-| SECRET_KEY | ✅ | Yes (random default) | YES |
-| ADMIN_API_TOKEN | ✅ | No | YES |
-| **MISSING:** TELEGRAM_SECRET_TOKEN | ❌ | — | YES |
-| **MISSING:** FLASK_SECRET_KEY (separate) | ❌ | — | YES |
+### Issues
+- **CRITICAL:** Postgres password has hardcoded default `${POSTGRES_PASSWORD:-MyS3cur3Pssw0r}` (S-4)
+- **HIGH:** Redis no `requirepass` (S-5)
+- **MEDIUM:** No `restart: unless-stopped` on postgres (it's on line 31 — OK)
+- **MEDIUM:** No `mem_limit` or `cpus` constraints on containers
 
 ---
 
-## HEALTH CHECKS
+## 3. ENVIRONMENT VARIABLES
 
-**File:** [`web/health.py`](5simTelegramBot-main/web/health.py)
+| Variable | Required | Default | Secure? |
+|----------|----------|---------|---------|
+| BOT_TOKEN | YES | None | ✅ from env |
+| ADMIN_BOT_TOKEN | YES | None | ✅ from env |
+| ADMIN_IDS | YES | None | ✅ from env |
+| HEROSMS_API_KEY | YES | None | ✅ from env |
+| ZARINPAL_MERCHANT | YES | None | ✅ from env |
+| NAVASAN_API_KEY | YES | None | ✅ from env |
+| DATABASE_URL | YES | None | ✅ from env |
+| POSTGRES_PASSWORD | YES | `MyS3cur3Pssw0r` | ❌ Hardcoded default |
+| SECRET_KEY | YES | `os.urandom(32).hex()` | ❌ Auto-generated |
+| WEBHOOK_SECRET_TOKEN | YES | `''` | ⚠️ Not enforced |
+| ADMIN_API_TOKEN | YES | `''` | ✅ from env |
 
-| Endpoint | Purpose | Status |
-|----------|---------|--------|
-| `/health` | Comprehensive (DB, cache, SMS) | ✅ |
-| `/ping` | Liveness probe | ✅ |
-
-Docker Compose health checks configured for all services ✅
-
----
-
-## LOGGING
-
-| Aspect | Status | Notes |
-|--------|--------|-------|
-| Log format | ✅ | `%(asctime)s - %(levelname)s - %(message)s` |
-| Log level via env | ✅ | `LOG_LEVEL` env var |
-| stdout logging | ✅ | `logging.StreamHandler(sys.stdout)` |
-| File logging | ❌ | No file handler — logs lost on container restart |
-| Structured logging | ❌ | No JSON logging for log aggregation |
-| Audit trail | ✅ | `audit_log` table for admin actions |
-| Error tracking | ❌ | No Sentry/Rollbar integration |
+### Issues
+- **CRITICAL:** `SECRET_KEY` auto-generates on restart (C-1, S-3)
+- **CRITICAL:** `POSTGRES_PASSWORD` hardcoded default (S-4)
+- **HIGH:** `WEBHOOK_SECRET_TOKEN` not enforced in production (S-2)
 
 ---
 
-## BACKUPS
+## 4. HEALTH CHECKS
 
-**File:** [`backup_manager.py`](5simTelegramBot-main/backup_manager.py)
+| Service | Check | Status |
+|---------|-------|--------|
+| PostgreSQL | `pg_isready` | ✅ |
+| Redis | `redis-cli ping` | ✅ |
+| Customer Bot | `curl /ping` | ✅ |
+| Admin Bot | `curl /ping` | ✅ |
+| Application /health | DB + cache + SMS provider | ✅ |
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| Automated backups | ✅ | Threaded loop with configurable interval |
-| Atomic writes | ✅ | Write to `.tmp` then `os.replace()` |
-| Backup format | ⚠️ | JSON — only backs up user balances |
-| Full DB backup | ❌ | No `pg_dump` integration |
-| Backup rotation | ❌ | No retention policy — file overwritten each time |
-| Offsite backup | ❌ | No S3/GCS/remote storage integration |
-| Restore tested | ⚠️ | Code exists but untested in production |
-
----
-
-## RECOVERY
-
-| Scenario | Recovery Path | Status |
-|----------|--------------|--------|
-| Database failure | Restart postgres container — data persisted via volume | ✅ |
-| Redis failure | Restart redis — AOF persistence enabled | ✅ |
-| Bot crash | Docker restart: unless-stopped | ✅ |
-| Webhook failure | Must manually re-register webhook | ⚠️ |
-| Provider API down | No fallback provider configured | ❌ |
-| Payment gateway down | Only ZarinPal — no fallback | ❌ |
-| Full system failure | `docker-compose up` from backup | ⚠️ |
+### `/health` Endpoint ([`web/health.py`](web/health.py))
+- Database connectivity ✅
+- Cache service stats ✅
+- SMS provider balance ✅
+- Returns JSON ✅
 
 ---
 
-## PRODUCTION READINESS CHECKLIST
+## 5. LOGGING
 
-| # | Requirement | Status | Action |
-|---|------------|--------|--------|
-| 1 | Gunicorn WSGI server | ❌ | Add `gunicorn` to CMD in docker-compose |
-| 2 | Celery app exists | ❌ | Create `tasks/celery_app.py` with Celery instance |
-| 3 | Webhook secret token | ❌ | Add `SECRET_TOKEN` env var + verification |
-| 4 | HTTPS termination | ❌ | Configure nginx with SSL certs |
-| 5 | Rate limiting active | ❌ | Apply `@rate_limit` decorator to routes |
-| 6 | Database connection pool > 10 | ❌ | Increase to 20-50 for production |
-| 7 | Redis authentication | ❌ | Add `requirepass` to Redis config |
-| 8 | Backup retention | ❌ | Add rotation + pg_dump |
-| 9 | Monitoring (Prometheus) | ⚠️ | Metrics code exists, not wired |
-| 10 | Error tracking (Sentry) | ❌ | Not integrated |
-| 11 | CI/CD pipeline | ❌ | No GitHub Actions/GitLab CI |
-| 12 | Migration tested | ⚠️ | Alembic migrations exist, untested against live DB |
-| 13 | Load tested | ❌ | Not performed |
-| 14 | Secrets rotation plan | ❌ | No documented procedure |
-| 15 | Disaster recovery plan | ❌ | No runbook |
+| Component | Configuration | Status |
+|-----------|-------------|--------|
+| Python | `logging.basicConfig(stream=sys.stdout)` | ✅ stdout |
+| Level | `LOG_LEVEL` env var (default INFO) | ✅ |
+| Format | `%(asctime)s - %(levelname)s - %(message)s` | ✅ |
+
+### Issues
+- **MEDIUM:** No structured logging (JSON format). Plain text only.
+- **MEDIUM:** No log rotation. Container stdout goes to Docker logging driver.
+- **LOW:** No correlation IDs for tracing requests across services.
 
 ---
 
-## OVERALL VERDICT
+## 6. BACKUPS
 
-**NOT PRODUCTION READY** — 11 of 15 production readiness requirements are not met. The application architecture is solid, but deployment infrastructure (Gunicorn, Celery app, HTTPS, monitoring, backup rotation, rate limiting) has significant gaps. The project can be made production-ready with approximately 1-2 weeks of targeted infrastructure work.
+| Component | File | Status |
+|-----------|------|--------|
+| Backup manager | [`backup_manager.py`](backup_manager.py) | ⚠️ At project root |
+| Backup script | [`scripts/backup.sh`](scripts/backup.sh) | ✅ |
+| DB backup interval | `BACKUP_INTERVAL_SECONDS=300` | ✅ 5 min |
+| Backup file | `BACKUP_FILE=data/users_backup.json` | ⚠️ JSON only |
+
+### Issues
+- **HIGH:** No PostgreSQL `pg_dump` backup in backup script. Only JSON backup.
+- **HIGH:** No off-site backup storage. Backup lives on same volume.
+- **MEDIUM:** No backup verification step.
+
+---
+
+## 7. RECOVERY
+
+### Recovery Procedures
+
+| Scenario | Recovery | Tested? |
+|----------|----------|---------|
+| PostgreSQL crash | Docker restart → auto-recovery via WAL | ❌ |
+| Redis crash | Docker restart → AOF replay | ❌ |
+| Bot crash | Docker restart (`restart: unless-stopped`) | ❌ |
+| Migration failure | `alembic downgrade` → fix → `alembic upgrade` | ❌ |
+| Data corruption | Restore from `pg_dump` (not configured) | ❌ |
+| Full disaster | Rebuild from Docker Compose + restore DB | ❌ |
+
+**Status:** ❌ No recovery procedures tested. No pg_dump backup configured.
+
+---
+
+## 8. MONITORING
+
+| Component | File | Status |
+|-----------|------|--------|
+| Metrics module | [`monitoring/metrics.py`](monitoring/metrics.py) | ✅ Exists |
+| Health check | `/health` and `/ping` endpoints | ✅ |
+| Alerting | None | ❌ |
+
+### Missing
+- Prometheus metrics export
+- Error rate alerting
+- DB connection pool monitoring
+- Celery task monitoring (Flower?)
+
+---
+
+## 9. PRODUCTION READINESS CHECKLIST
+
+| Requirement | Status | Notes |
+|-------------|--------|-------|
+| Dockerfile (multi-stage) | ✅ | |
+| Docker Compose (all services) | ✅ | |
+| Environment variables documented | ✅ | `.env.example` |
+| Health checks (all services) | ✅ | |
+| Logging configured | ⚠️ | No structured logging |
+| Database backups | ❌ | No pg_dump |
+| Off-site backup storage | ❌ | |
+| Recovery procedures tested | ❌ | |
+| Monitoring / alerting | ❌ | |
+| Secrets management | ❌ | Hardcoded defaults |
+| Non-root container user | ✅ | |
+| HTTPS termination | ✅ | nginx |
+| Rate limiting | ⚠️ | Exists but not applied universally |
+| Audit logging | ⚠️ | DB only, not tamper-evident |
+
+---
+
+**Overall: PARTIALLY_CERTIFIED — Docker infrastructure is solid. Backups, recovery, monitoring, and secrets management need work.**
+
+---
+*End of Phase L — Production Readiness Report*

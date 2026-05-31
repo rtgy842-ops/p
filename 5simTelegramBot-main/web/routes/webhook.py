@@ -8,7 +8,7 @@ POST-only. Requires X-Telegram-Bot-Api-Secret-Token header.
 import logging
 import os
 
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, jsonify, request
 
 logger = logging.getLogger(__name__)
 
@@ -31,10 +31,16 @@ def init(bot_instance):
 
 def _verify_webhook_token() -> bool:
     """Verify the Telegram secret token header against the configured token."""
+    import secrets as _secrets
     token = request.headers.get('X-Telegram-Bot-Api-Secret-Token', '')
     if not _WEBHOOK_SECRET_TOKEN:
-        return True  # If not configured, allow all (backward compat for dev)
-    return token == _WEBHOOK_SECRET_TOKEN
+        # FAIL CLOSED in production. Only bypass in dev for testing.
+        from config import IS_PRODUCTION
+        if IS_PRODUCTION:
+            logger.error("WEBHOOK_SECRET_TOKEN not set in production — rejecting request")
+            return False
+        return True
+    return _secrets.compare_digest(token, _WEBHOOK_SECRET_TOKEN)
 
 
 @webhook_bp.route('/', methods=['POST'])

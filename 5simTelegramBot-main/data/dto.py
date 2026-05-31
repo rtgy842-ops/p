@@ -160,6 +160,7 @@ class PaymentResultDTO:
     ref_id: Optional[str] = None
     payment_id: Optional[str] = None  # Card-to-card payment_id
     error_message: Optional[str] = None
+    new_balance: Optional[int] = None  # Balance after credit (avoids second DB read)
 
 
 # ── SMS / Number Purchase DTO ──────────────────────────────────

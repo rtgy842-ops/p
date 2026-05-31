@@ -70,14 +70,17 @@ class ZarinPalGateway(BasePaymentGateway):
             self._verify_url = "https://payment.zarinpal.com/pg/v4/payment/verify.json"
 
     def create_payment(self, user_id: int, amount: int,
-                       description: str = '') -> PaymentResultDTO:
-        """Create a ZarinPal payment request."""
+                       description: str = '', state_token: str = '') -> PaymentResultDTO:
+        """Create a ZarinPal payment request. Pass state_token for CSRF protection."""
         try:
+            callback = f"{self.callback_base}?user_id={user_id}&amount={amount}"
+            if state_token:
+                callback += f"&state={state_token}"
             data = {
                 "merchant_id": self.merchant_id,
                 "amount": amount * 10,  # Toman to Rial
                 "description": description or f"شارژ حساب کاربر {user_id}",
-                "callback_url": f"{self.callback_base}?user_id={user_id}&amount={amount}",
+                "callback_url": callback,
                 "metadata": {
                     "mobile": str(user_id),
                     "email": "",
@@ -251,8 +254,9 @@ class PaymentService:
         return self._gateways.get(gateway)
 
     def initiate_payment(self, gateway: PaymentGateway, user_id: int,
-                         amount: int, description: str = '') -> PaymentResultDTO:
-        """Initiate a payment through the specified gateway."""
+                         amount: int, description: str = '',
+                         state_token: str = '') -> PaymentResultDTO:
+        """Initiate a payment through the specified gateway. Pass state_token for CSRF."""
         gw = self.get_gateway(gateway)
         if gw is None:
             return PaymentResultDTO(
@@ -260,7 +264,7 @@ class PaymentService:
                 gateway=gateway,
                 error_message=f"Unknown gateway: {gateway}"
             )
-        return gw.create_payment(user_id, amount, description)
+        return gw.create_payment(user_id, amount, description, state_token=state_token)
 
     def verify_and_credit(self, gateway: PaymentGateway, authority: str,
                           user_id: int, amount: int) -> PaymentResultDTO:
@@ -315,8 +319,12 @@ class PaymentService:
                 if existing:
                     logger.info(
                         f"Idempotent (in-txn): ref_id {ref_id} already credited")
+                    # Fetch current balance for the already-credited case
+                    balance_row = db.fetchone(
+                        'SELECT balance FROM users WHERE user_id = %s', (user_id,))
+                    bal = int(balance_row[0]) if balance_row else 0
                     return PaymentResultDTO(
-                        success=True, gateway=gateway, ref_id=ref_id)
+                        success=True, gateway=gateway, ref_id=ref_id, new_balance=bal)
 
                 # Lock user row for update
                 row = db.fetchone(
@@ -343,7 +351,7 @@ class PaymentService:
             logger.info(
                 f"Payment complete: user={user_id}, amount={amount}, gateway={gateway.value}, ref={ref_id}")
             return PaymentResultDTO(
-                success=True, gateway=gateway, ref_id=ref_id)
+                success=True, gateway=gateway, ref_id=ref_id, new_balance=new_balance)
         except Exception as e:
             logger.error(
                 f"Balance credit failed after successful payment: user={user_id}, amount={amount}: {e}")

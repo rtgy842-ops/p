@@ -56,13 +56,11 @@ def process_zarinpal_amount(message):
         from bot import _generate_payment_state
         state_token = _generate_payment_state(user_id, amount)
 
-        success, payment_url, authority = compat_zarinpal_create(user_id, amount, f"شارژ حساب کاربر {user_id}")
+        success, payment_url, authority = compat_zarinpal_create(
+            user_id, amount, f"شارژ حساب کاربر {user_id}", state_token=state_token)
         if success and payment_url:
-            # Append state token to the ZarinPal callback URL
             import urllib.parse
             parsed = urllib.parse.urlparse(payment_url)
-            # ZarinPal redirects to the callback_url passed in create_payment body,
-            # so we append state to the ZarinPal redirect URL returned
             payment_url_with_state = payment_url
             keyboard = types.InlineKeyboardMarkup()
             keyboard.add(

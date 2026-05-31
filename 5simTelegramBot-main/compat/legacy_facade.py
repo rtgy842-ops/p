@@ -125,8 +125,10 @@ def order_cancel(activation_id: int) -> dict:
 # Payment Operations
 # ═══════════════════════════════════════════════════════════════
 
-def payment_create_zarinpal(user_id: int, amount: int, description: str = '') -> tuple:
-    result = _payment.initiate_payment(PaymentGateway.ZARINPAL, user_id, amount, description)
+def payment_create_zarinpal(user_id: int, amount: int, description: str = '',
+                            state_token: str = '') -> tuple:
+    result = _payment.initiate_payment(PaymentGateway.ZARINPAL, user_id, amount,
+                                       description, state_token=state_token)
     if result.success:
         return True, result.payment_url, result.authority
     return False, None, None

@@ -116,9 +116,9 @@ class TestReferralService:
 
     def test_generate_code_returns_string(self, monkeypatch):
         """Test that generate_code produces a valid 10-char code using in-memory fallback."""
-        from services.referral_service import ReferralService
         # Mock db_context to avoid needing real PostgreSQL
         from db import context as ctx_module
+        from services.referral_service import ReferralService
         monkeypatch.setattr(ctx_module, 'db_context', _fake_db_context)
         svc = ReferralService()
         # create_if_not_exists inserts the user via generate_code's internal DB call
@@ -172,9 +172,9 @@ class TestSmartRouter:
         assert len(strategies) >= 3
 
     def test_default_strategy_is_best_price(self, monkeypatch):
-        from services.smart_router import SmartRouter, RoutingStrategy
         # Reset routing_strategy setting to None to test default
         from services.settings_service import SettingsService
+        from services.smart_router import RoutingStrategy, SmartRouter
         monkeypatch.setattr(SettingsService, 'get', lambda self, k, d=None: None)
         router = SmartRouter()
         strategy = router.get_strategy()

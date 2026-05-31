@@ -199,6 +199,8 @@ def admin_user_balance_prompt(call):
     _bot.register_next_step_handler(msg, _process_add_balance)
 
 
+MAX_BALANCE_CHANGE = 100_000_000  # 100M Toman cap for admin balance operations
+
 def _process_add_balance(message):
     from services.admin_service import AdminService
     parts = message.text.strip().split()
@@ -208,6 +210,9 @@ def _process_add_balance(message):
     try:
         uid = int(parts[0])
         amount = int(parts[1])
+        if amount <= 0 or amount > MAX_BALANCE_CHANGE:
+            _bot.reply_to(message, f"❌ Amount must be 1-{MAX_BALANCE_CHANGE:,} Toman")
+            return
         admin = AdminService()
         result = admin.add_balance(uid, amount, message.from_user.id)
         if result is not None:
@@ -236,6 +241,9 @@ def _process_deduct_balance(message):
     try:
         uid = int(parts[0])
         amount = int(parts[1])
+        if amount <= 0 or amount > MAX_BALANCE_CHANGE:
+            _bot.reply_to(message, f"❌ Amount must be 1-{MAX_BALANCE_CHANGE:,} Toman")
+            return
         admin = AdminService()
         result = admin.reduce_balance(uid, amount, message.from_user.id)
         if result is not None:

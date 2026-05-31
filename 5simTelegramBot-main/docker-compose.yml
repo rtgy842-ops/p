@@ -17,7 +17,7 @@ services:
     container_name: smsbot-postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-smsbot}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-MyS3cur3Pssw0r}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
       POSTGRES_DB: ${POSTGRES_DB:-smsbot}
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -39,6 +39,7 @@ services:
     command: >
       redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
       --save 900 1 --save 300 10 --save 60 10000
+      --requirepass ${REDIS_PASSWORD:-}
     networks:
       - internal
     healthcheck:

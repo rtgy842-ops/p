@@ -2,7 +2,6 @@
 """
 bot.py — Customer Bot (WEBHOOK mode — receives updates via POST /)
 """
-import hashlib
 import logging
 import os
 import secrets as _secrets
@@ -44,6 +43,7 @@ logger.info(f"Handlers: {len(router._callback_handlers)} cb + {len(router._messa
 
 # ── In-memory CSRF state store (production should use Redis) ──
 import time as _time
+
 _payment_states: dict[str, dict] = {}  # state_token -> {user_id, amount, created_at}
 
 def _generate_payment_state(user_id: int, amount: int) -> str:
@@ -83,12 +83,10 @@ def verify_payment(user_id, amount):
         payment_svc = PaymentService()
         result = payment_svc.verify_and_credit(PaymentGateway.ZARINPAL, a, uid, amt)
         if result.success:
-            from services.wallet_service import WalletService
-            wallet_svc = WalletService()
-            balance = wallet_svc.get_balance(uid)
+            balance = result.new_balance
             return render_template('payment_result.html', True,
                                    amount=f"{amt:,}", ref_id=result.ref_id or '---',
-                                   balance=f"{balance:,}" if balance else "?")
+                                   balance=f"{balance:,}" if balance is not None else "?")
         return render_template('payment_result.html', False,
                                message=result.error_message or "Verification failed")
     except Exception as e:

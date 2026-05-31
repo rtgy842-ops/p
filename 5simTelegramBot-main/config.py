@@ -77,7 +77,9 @@ CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', 'redis://localhost:63
 FLASK_HOST = os.getenv('FLASK_HOST', '0.0.0.0')
 FLASK_PORT = int(os.getenv('FLASK_PORT', '5000'))
 FLASK_DEBUG = os.getenv('FLASK_DEBUG', 'false').lower() == 'true'
-SECRET_KEY = os.getenv('SECRET_KEY', os.urandom(32).hex())
+SECRET_KEY = os.getenv('SECRET_KEY')
+if not SECRET_KEY:
+    _missing_secrets.add('SECRET_KEY')
 
 # ── Admin API ────────────────────────────────────────────
 ADMIN_API_TOKEN = os.getenv('ADMIN_API_TOKEN', '')

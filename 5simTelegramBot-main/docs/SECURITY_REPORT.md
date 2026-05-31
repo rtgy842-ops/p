@@ -1,222 +1,306 @@
-# SECURITY REPORT — NumGenius Enterprise SaaS
-## Phase I: Security Audit
+# SECURITY AUDIT REPORT — NumGenius Enterprise SaaS
+## Phase I: Full Security Review
 
 **Date:** 2026-05-31
-**Status:** NEEDS REMEDIATION
+**Auditor:** Security Auditor
+**Scope:** All source code, Docker config, nginx config, environment handling
 
 ---
 
-## EXECUTIVE SUMMARY
+## 1. EXECUTIVE SUMMARY
 
-| Risk Level | Count |
-|------------|-------|
-| CRITICAL | 3 |
-| HIGH     | 4 |
-| MEDIUM   | 6 |
-| LOW      | 5 |
+| Severity | Count |
+|----------|-------|
+| CRITICAL | 4 |
+| HIGH | 7 |
+| MEDIUM | 8 |
+| LOW | 5 |
+| **TOTAL** | **24** |
 
----
-
-## CRITICAL FINDINGS
-
-### S1 — Hardcoded Secrets in Version Control
-
-**Severity:** CRITICAL
-**Finding:** The config file previously contained hardcoded secrets. While [`config.py`](5simTelegramBot-main/config.py) now uses `_env()` from environment variables, the following concerns exist:
-
-1. **Startup script uses hardcoded path:** [`startup_test.py:4`](5simTelegramBot-main/startup_test.py:4) — `os.chdir(r'c:\Users\MC\Downloads\...)` exposes a developer username
-2. **Test file checks for old secrets:** [`test_enterprise_services.py:313-319`](5simTelegramBot-main/tests/test_enterprise_services.py:313) — verifies old tokens are NOT present, but the test file itself documents them
-
-**Risk:** If secrets were ever committed to git history, they remain accessible even after removal from current files.
-
-**Fix:** Run `git filter-branch` or `bfg-repo-cleaner` to purge secrets from git history. Rotate all exposed credentials.
+**Overall Security Posture:** NEEDS IMPROVEMENT — 4 CRITICAL issues must be resolved before production. The codebase shows good security intent (webhook tokens, CSRF protection, idempotency checks, audit logging) but has dangerous implementation gaps.
 
 ---
 
-### S2 — Missing Webhook Secret Verification
+## 2. CRITICAL FINDINGS
 
-**Severity:** CRITICAL
-**File:** [`web/routes/webhook.py:23-37`](5simTelegramBot-main/web/routes/webhook.py:23)
-**Finding:** The Telegram webhook endpoint has zero authentication:
-- No `X-Telegram-Bot-Api-Secret-Token` header verification
-- Accepts GET requests (should be POST only)
-- Returns `'OK'` on GET (information disclosure — confirms bot is live)
-- Processes ANY JSON payload as a Telegram Update
+### S-1: Admin API Token Exposed in URL Query String
+- **Severity:** CRITICAL
+- **Category:** Authentication — Token Leakage
+- **Files:**
+  - [`admin_bot.py:46-47`](admin_bot.py:46-47) — Generates link with token in query param
+  - [`web/routes/admin_panel.py`](web/routes/admin_panel.py) — Reads token from `request.args.get('token')`
+- **Root Cause:** `f'<a href="{w}/admin?token={t}">🔗 Admin Panel</a>'` embeds the admin API token directly in the URL.
+- **Attack Vector:**
+  1. Proxy/nginx/server access logs capture the full URL including `?token=...`
+  2. Browser history stores the token
+  3. Referer headers leak the token to third-party sites
+  4. Anyone with log access gains admin panel access
+- **Recommended Fix:**
+  - Use HTTP `Authorization: Bearer <token>` header
+  - Create a login page that POSTs the token
+  - Use session cookies after authentication
 
-**Attack Vector:** An attacker who discovers the webhook URL can:
-- Send forged update payloads to trigger handlers
-- Cause the bot to send messages to users (if handler code references `call.from_user.id`)
-- Denial of service via malformed JSON
-
-**Fix:**
-1. Change route to `methods=['POST']` only
-2. Add secret token verification
-3. Configure webhook with `secret_token` parameter
-
----
-
-### S3 — Payment Callback CSRF
-
-**Severity:** CRITICAL
-**Finding:** The ZarinPal callback endpoint at `/verify/<user_id>/<amount>` has no CSRF protection:
-- No state/nonce token verification
-- No origin validation
-- Relies solely on `Authority` and `Status` query parameters which come from the payment gateway redirect
-- A malicious actor could attempt to replay a valid Authority value
-
-**Risk:** Medium-low in practice (Authority is single-use per ZarinPal), but the endpoint should still implement state verification.
-
-**Fix:** Add a `state` parameter stored in the user's session before redirecting to ZarinPal. Verify `state` on callback.
-
----
-
-## HIGH FINDINGS
-
-### S4 — Insecure `SECRET_KEY` Default
-
-**Severity:** HIGH
-**File:** [`config.py:79`](5simTelegramBot-main/config.py:79)
-**Finding:** `SECRET_KEY = os.getenv('SECRET_KEY', os.urandom(32).hex())` — When no env var is set:
-- Every process restart generates a new key
-- Flask sessions become invalid
-- Session-based admin auth breaks
-- Multiple Gunicorn workers each get different keys
-
-**Fix:** Make `SECRET_KEY` a required env var. Raise on missing in production.
-
----
-
-### S5 — SQL Injection Risk in Migration Manager
-
-**Severity:** HIGH
-**File:** [`db/migrations.py:17-18`](5simTelegramBot-main/db/migrations.py:17)
-**Finding:** Settings seeding uses Python f-string interpolation:
+### S-2: Webhook Secret Token Bypass in Production
+- **Severity:** CRITICAL
+- **Category:** Authentication — Missing Enforcement
+- **File:** [`web/routes/webhook.py:32-37`](web/routes/webhook.py:32-37)
+- **Root Cause:**
 ```python
-f"INSERT INTO settings (key, value) VALUES ('{k}', '{v}') ON CONFLICT (key) DO NOTHING"
+def _verify_webhook_token() -> bool:
+    token = request.headers.get('X-Telegram-Bot-Api-Secret-Token', '')
+    if not _WEBHOOK_SECRET_TOKEN:
+        return True  # If not configured, allow all ← THIS IS DANGEROUS
+    return token == _WEBHOOK_SECRET_TOKEN
 ```
-If any setting key or value from `DEFAULT_SETTINGS` contains a single quote, this produces invalid SQL. While the current values are hardcoded and safe, the pattern is dangerous.
-
-**Fix:** Use parameterized queries:
+- **Attack Vector:** If `WEBHOOK_SECRET_TOKEN` is not set in production `.env`, anyone can POST fake Telegram updates to the webhook endpoint.
+- **Impact:** Attackers can:
+  - Trigger purchases on behalf of users (callback_query forgery)
+  - Exfiltrate user data through bot responses
+  - Send spam through the bot
+- **Recommended Fix:**
 ```python
-"INSERT INTO settings (key, value) VALUES (%s, %s) ON CONFLICT (key) DO NOTHING", (k, v)
+def _verify_webhook_token() -> bool:
+    token = request.headers.get('X-Telegram-Bot-Api-Secret-Token', '')
+    if not _WEBHOOK_SECRET_TOKEN:
+        if IS_PRODUCTION:
+            return False  # FAIL CLOSED
+        return True  # Dev only
+    import secrets
+    return secrets.compare_digest(token, _WEBHOOK_SECRET_TOKEN)
+```
+Note: Also use `secrets.compare_digest()` for timing-attack-safe comparison.
+
+### S-3: SECRET_KEY Auto-Generated on Every Restart
+- **Severity:** CRITICAL
+- **Category:** Cryptography — Non-Deterministic Key
+- **File:** [`config.py:80`](config.py:80)
+- **Root Cause:** `SECRET_KEY = os.getenv('SECRET_KEY', os.urandom(32).hex())`
+- **Impact:**
+  - All Flask sessions invalidated on restart
+  - CSRF tokens broken
+  - If SECRET_KEY is used for signing anything persistent, signatures are unverifiable after restart
+- **Recommended Fix:** Remove the fallback. Make SECRET_KEY mandatory:
+```python
+SECRET_KEY = _env('SECRET_KEY')  # Use validator that raises if missing
+```
+
+### S-4: POSTGRES_PASSWORD Has Hardcoded Default in Docker Compose
+- **Severity:** CRITICAL
+- **Category:** Hardcoded Credentials
+- **File:** [`docker-compose.yml:20`](docker-compose.yml:20)
+- **Root Cause:** `${POSTGRES_PASSWORD:-MyS3cur3Pssw0r}`
+- **Impact:** If `POSTGRES_PASSWORD` is not set in `.env`, the database runs with a publicly known default password. The database is accessible from any container on the `internal` Docker network.
+- **Recommended Fix:** Remove the default. Make it mandatory:
+```yaml
+environment:
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
 ```
 
 ---
 
-### S6 — Admin API Token Exposure in Chat
+## 3. HIGH FINDINGS
 
-**Severity:** HIGH
-**File:** [`bot/handlers/admin_bot.py:869`](5simTelegramBot-main/bot/handlers/admin_bot.py:869)
-**Finding:** The `admin:web_panel` callback displays the admin API token in plain text:
-```python
-panel_url = f"{webhook_url}/admin?token={token}"
-# ...
-f"🔗 `{panel_url}`"
+### S-5: No Redis Authentication
+- **Severity:** HIGH
+- **Category:** Infrastructure Security
+- **File:** [`docker-compose.yml:39-41`](docker-compose.yml:39-41)
+- **Root Cause:** Redis runs without `requirepass`.
+- **Impact:** Any container on the internal network can read/write/delete Redis data. Cache poisoning. Celery task manipulation.
+- **Recommended Fix:** Add `--requirepass ${REDIS_PASSWORD}` and configure Celery and apps with the password.
+
+### S-6: No Input Validation on Admin Balance Operations
+- **Severity:** HIGH
+- **Category:** Input Validation
+- **File:** [`bot/handlers/admin_bot.py:202-218`](bot/handlers/admin_bot.py:202-218), lines 230-246
+- **Root Cause:** No upper bound on balance additions/deductions. An admin could accidentally add billions.
+- **Impact:** Financial manipulation. No audit trail visibility on large transactions without checking logs.
+- **Recommended Fix:** Add `MAX_BALANCE_CHANGE = 100_000_000` and validate.
+
+### S-7: No Rate Limiting on Admin Endpoints
+- **Severity:** HIGH
+- **Category:** Abuse Prevention
+- **File:** [`bot/handlers/admin_bot.py`](bot/handlers/admin_bot.py) (entire file)
+- **Root Cause:** Rate limiter exists in `services/rate_limiter.py` but is never applied to admin handlers.
+- **Impact:** Brute-force user ID enumeration. Rapid balance changes. No brute-force protection.
+- **Recommended Fix:** Apply `RateLimiter.is_allowed()` checks on search, balance add/deduct, ban operations.
+
+### S-8: Payment CSRF State Token Not Reaching Callback
+- **Severity:** HIGH
+- **Category:** CSRF
+- **File:** [`bot/handlers/payment.py:56-66`](bot/handlers/payment.py:56-66)
+- **Root Cause:** State token is generated but NOT appended to the ZarinPal callback URL. The `/verify` endpoint receives `state=''` (empty string), which will NEVER match any stored state.
+- **Impact:** ALL ZarinPal payment callbacks will fail CSRF validation. Users will see "Invalid or expired session" errors after paying.
+- **Recommended Fix:** Pass state token to `payment_create_zarinpal()` and include it in the ZarinPal request's `callback_url` parameter.
+
+### S-9: In-Memory Payment State Store Lost on Restart
+- **Severity:** HIGH
+- **Category:** Data Integrity
+- **File:** [`bot.py:47`](bot.py:47)
+- **Root Cause:** `_payment_states: dict[str, dict] = {}` — in-memory only.
+- **Impact:** If bot restarts while users have active payment sessions, all CSRF state tokens are lost. Users must restart payment flow.
+- **Recommended Fix:** Use Redis with 30-minute TTL for payment states.
+
+### S-10: Broadcaster Sends to All Users Without Rate Limiting
+- **Severity:** HIGH
+- **Category:** Abuse Prevention
+- **File:** [`bot/handlers/admin_bot.py:547-566`](bot/handlers/admin_bot.py:547-566)
+- **Root Cause:** Sequential `send_message()` loop with no delay. Telegram rate limit: ~30/sec.
+- **Impact:** Messages beyond rate limit fail silently. Could trigger Telegram anti-spam detection.
+- **Recommended Fix:** Use Celery task with 0.05s delay between messages. Track successes/failures.
+
+### S-11: Audit Log Only in Database — Can Be Deleted
+- **Severity:** HIGH
+- **Category:** Audit Trail Integrity
+- **File:** [`services/admin_service.py:30-37`](services/admin_service.py:30-37), [`services/audit_service.py`](services/audit_service.py)
+- **Root Cause:** All audit entries go to `audit_log` table only. A compromised database admin could delete audit records.
+- **Impact:** No tamper-evident audit trail.
+- **Recommended Fix:** Write critical audit events to append-only file with hash chaining (blockchain-style). Or use a separate audit database with INSERT-only permissions.
+
+---
+
+## 4. MEDIUM FINDINGS
+
+### S-12: No HTTPS Enforcement in Flask
+- **Severity:** MEDIUM
+- **Category:** Transport Security
+- **Files:** [`bot.py`](bot.py:109), [`admin_bot.py`](admin_bot.py:60)
+- **Root Cause:** `app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)` — Flask runs HTTP only. nginx provides HTTPS termination externally.
+- **Impact:** If nginx is misconfigured or bypassed, traffic is unencrypted.
+- **Recommended Fix:** Document the nginx dependency for HTTPS. Add HSTS headers in nginx.
+
+### S-13: No Content Security Policy Headers
+- **Severity:** MEDIUM
+- **Category:** Web Security
+- **Files:** All Flask routes
+- **Root Cause:** No CSP, X-Frame-Options, X-Content-Type-Options headers set.
+- **Impact:** Clickjacking risk on admin panel. MIME sniffing risk.
+- **Recommended Fix:** Add Flask after-request handler to set security headers.
+
+### S-14: No CORS Configuration
+- **Severity:** MEDIUM
+- **Category:** Web Security
+- **Files:** [`web/routes/admin_api.py`](web/routes/admin_api.py)
+- **Root Cause:** No CORS headers configured. Default Flask behavior allows same-origin only.
+- **Impact:** If admin panel is served from a different origin, API calls fail.
+- **Recommended Fix:** Add Flask-CORS with explicit allowed origins.
+
+### S-15: Missing `secrets.compare_digest()` for Token Comparison
+- **Severity:** MEDIUM
+- **Category:** Cryptography — Timing Attack
+- **File:** [`web/routes/webhook.py:37`](web/routes/webhook.py:37)
+- **Root Cause:** `token == _WEBHOOK_SECRET_TOKEN` uses standard string comparison which short-circuits. Vulnerable to timing attacks.
+- **Impact:** An attacker could theoretically determine the webhook token character-by-character through timing analysis.
+- **Recommended Fix:** Use `secrets.compare_digest(token, _WEBHOOK_SECRET_TOKEN)`.
+
+### S-16: Docker daemon Runs as root (USER botuser but entrypoint runs exec)
+- **Severity:** MEDIUM
+- **Category:** Container Security
+- **File:** [`Dockerfile:40`](Dockerfile:40)
+- **Root Cause:** Dockerfile correctly sets `USER botuser`, but docker-entrypoint.sh uses `exec "$@"` which respects the USER.
+- **Impact:** Acceptable risk. Non-root user. Verified.
+- **Recommended Fix:** Add `--read-only` to docker-compose for filesystem where possible.
+
+### S-17: No Request Size Limiting in Flask
+- **Severity:** MEDIUM
+- **Category:** DoS Prevention
+- **Files:** [`bot.py`](bot.py), [`admin_bot.py`](admin_bot.py)
+- **Root Cause:** Flask default max content length is unlimited. nginx sets `client_max_body_size 20M`.
+- **Impact:** If nginx is bypassed, large uploads could consume memory.
+- **Recommended Fix:** Set `app.config['MAX_CONTENT_LENGTH'] = 20 * 1024 * 1024` in Flask.
+
+### S-18: `eval()` or `exec()` — None Found ✅
+- **Status:** CLEAN — No use of `eval()`, `exec()`, or `compile()` found anywhere in the codebase.
+
+### S-19: SQL Injection — PostgreSQL Parameterized Queries Used ✅
+- **Status:** CLEAN — All database queries use `%s` placeholders with parameterized execution. No string concatenation with user input in SQL queries.
+- **One exception:** Migration 002 uses `f"DELETE FROM {table}"` but `table` is hardcoded in the migration, not user-controlled. Safe.
+
+---
+
+## 5. LOW FINDINGS
+
+### S-20: `.env.example` Shows Placeholder Values
+- **Severity:** LOW
+- **File:** [`.env.example`](.env.example)
+- **Impact:** None for security (it's documentation). Just a reminder to not commit real `.env`.
+- **Status:** `.env` is in `.gitignore`. ✅
+
+### S-21: Logger May Log Sensitive Data in Callback Data
+- **Severity:** LOW
+- **File:** [`bot/middleware.py:108`](bot/middleware.py:108)
+- **Root Cause:** `logger.info(f"Request: user={uid}, data={data[:100]}")` — callback data may contain user IDs, amounts, etc.
+- **Impact:** Low. Callback data is not secret but may include service/country choices.
+- **Recommended Fix:** Sanitize or truncate to first 20 chars.
+
+### S-22: Debug Mode Controlled by Env Var
+- **Severity:** LOW
+- **File:** [`config.py:79`](config.py:79)
+- **Root Cause:** `FLASK_DEBUG = os.getenv('FLASK_DEBUG', 'false').lower() == 'true'`
+- **Impact:** If FLASK_DEBUG=true in production, Werkzeug debugger exposes code execution.
+- **Status:** Default is `false`. ✅ Safe by default.
+
+### S-23: No Signed Cookies
+- **Severity:** LOW
+- **Category:** Session Security
+- **Files:** All web routes
+- **Root Cause:** Flask sessions are not used. Admin panel uses token-based auth (query param — see S-1). No cookies to protect.
+- **Impact:** If sessions are added later, ensure they use `SESSION_COOKIE_SECURE=True` and `SESSION_COOKIE_HTTPONLY=True`.
+
+### S-24: nginx TLS Configuration Missing Modern Cipher Suites
+- **Severity:** LOW
+- **File:** [`nginx/numgenius.conf`](nginx/numgenius.conf)
+- **Root Cause:** No explicit `ssl_ciphers`, `ssl_protocols`, or `ssl_prefer_server_ciphers` directives.
+- **Impact:** Uses nginx defaults which are acceptable but not optimal.
+- **Recommended Fix:** Add:
+```nginx
+ssl_protocols TLSv1.2 TLSv1.3;
+ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
+ssl_prefer_server_ciphers off;
 ```
-Anyone who can see the admin's Telegram chat (including Telegram itself, any forward recipients, or screenshot viewers) can access the admin panel.
-
-**Fix:** Send the token in a separate, auto-deleting message, or use a one-time token system.
 
 ---
 
-### S7 — No Rate Limiting on Customer Bot Handlers
+## 6. SECURITY POSTURE SUMMARY
 
-**Severity:** HIGH
-**Finding:** While [`services/rate_limiter.py`](5simTelegramBot-main/services/rate_limiter.py) exists with a comprehensive token-bucket implementation and Flask decorator, it is **not integrated** into any customer bot handler or webhook route. The `rate_limit` decorator is defined but never applied.
-
-**Risk:** Brute-force attacks on SMS code checking, purchase attempts, payment callbacks.
-
-**Fix:** Apply `@rate_limit('purchase')` to purchase handlers, `@rate_limit('verify')` to payment callbacks, `@rate_limit('default')` to the webhook endpoint.
-
----
-
-## MEDIUM FINDINGS
-
-### S8 — Bare Except Clauses (6 instances)
-
-**Severity:** MEDIUM
-**Files:** [`bot/handlers/admin/channels.py:33`](5simTelegramBot-main/bot/handlers/admin/channels.py:33), [`db/context.py:75`](5simTelegramBot-main/db/context.py:75), [`db/migrations.py:107`](5simTelegramBot-main/db/migrations.py:107)
-
-Bare `except:` clauses catch `KeyboardInterrupt`, `SystemExit`, and other system exceptions. These should never be silently suppressed.
-
----
-
-### S9 — Information Disclosure via `startup_test.py`
-
-**Severity:** MEDIUM
-**File:** [`startup_test.py`](5simTelegramBot-main/startup_test.py)
-**Finding:** Contains absolute path revealing developer username `MC`. If committed, this is in git history.
+| Category | Status | Notes |
+|----------|--------|-------|
+| Hardcoded secrets | ⚠️ FAIL | Docker Compose Postgres default password |
+| Environment leaks | ✅ PASS | `.env` in `.gitignore`, `.env.example` is placeholder-only |
+| SQL injection | ✅ PASS | All queries parameterized with `%s` |
+| Command injection | ✅ PASS | No `os.system()`, `subprocess` with shell=True found |
+| Path traversal | ✅ PASS | No file path operations on user input |
+| XSS | ⚠️ NEEDS REVIEW | Telegram API handles escaping; Flask templates not checked for `|safe` misuse |
+| CSRF | ⚠️ PARTIAL | Payment CSRF implemented but broken (S-8) |
+| Authentication | ⚠️ FAIL | Webhook token bypass in prod (S-2), admin token in URL (S-1) |
+| Authorization | ✅ PASS | RBAC service with role-based checks on all admin operations |
+| Rate limiting | ⚠️ PARTIAL | RateLimiter class exists but not applied (S-7) |
+| Abuse prevention | ⚠️ PARTIAL | Broadcast has no rate limiting (S-10) |
+| Audit trail | ⚠️ PARTIAL | DB-only audit log, can be deleted (S-11) |
+| Transport security | ⚠️ PARTIAL | HTTPS via nginx only, no HSTS (S-12) |
+| Cryptographic practices | ⚠️ FAIL | Timing-vulnerable token comparison (S-15), non-deterministic SECRET_KEY (S-3) |
 
 ---
 
-### S10 — API Key Service Is In-Memory Only
+## 7. ACTION ITEMS (ORDERED BY PRIORITY)
 
-**Severity:** MEDIUM
-**File:** [`services/api_key_service.py`](5simTelegramBot-main/services/api_key_service.py)
-**Finding:** API keys stored in Python dict — lost on restart. Hash is SHA-256 (acceptable), but keys can't be revoked persistently.
-
----
-
-### S11 — No Input Sanitization on Admin Search
-
-**Severity:** MEDIUM
-**File:** [`bot/handlers/admin_bot.py:165`](5simTelegramBot-main/bot/handlers/admin_bot.py:165)
-**Finding:** `int(message.text.strip())` — if the message text is extremely large, this could cause memory issues. No length validation before conversion.
-
----
-
-### S12 — Database Connection String in Environment
-
-**Severity:** MEDIUM
-**Finding:** `DATABASE_URL` contains credentials. While using env vars is correct, the connection string is not encrypted at rest in `.env`. Docker secrets or a vault should be used in production.
-
----
-
-### S13 — No CSP/XSS Headers on Web Templates
-
-**Severity:** MEDIUM
-**Finding:** Flask templates (`payment_result.html`, `admin/dashboard.html`, etc.) don't set Content-Security-Policy headers. While templates use Jinja2 auto-escaping (safe), CSP provides defense-in-depth.
+| Priority | Finding | Action |
+|----------|---------|--------|
+| P0 | S-4 | Remove Postgres default password |
+| P0 | S-3 | Make SECRET_KEY mandatory |
+| P0 | S-2 | Enforce webhook token in production |
+| P0 | S-1 | Move admin token from query string to Bearer header |
+| P1 | S-8 | Fix payment CSRF state token in callback URL |
+| P1 | S-5 | Add Redis password |
+| P1 | S-7 | Apply rate limiting to admin endpoints |
+| P1 | S-10 | Add rate limiting to broadcast |
+| P1 | S-11 | Add file-based audit log |
+| P2 | S-9 | Move payment states to Redis |
+| P2 | S-15 | Use `secrets.compare_digest()` |
+| P2 | S-12 | Add HSTS headers in nginx |
+| P2 | S-13 | Add security headers (CSP, X-Frame-Options) |
+| P3 | S-16 | Harden container filesystem |
+| P3 | S-24 | Configure TLS cipher suites |
 
 ---
 
-## LOW FINDINGS
-
-### S14 — No Helmet/Security Headers
-Missing: X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Strict-Transport-Security.
-
-### S15 — Debug Mode Configurable via Env
-`FLASK_DEBUG` env var could expose stack traces if accidentally set to `true` in production.
-
-### S16 — Gunicorn Not Configured in Docker CMD
-`docker-compose.yml` uses `python bot.py` directly — no Gunicorn with multiple workers for production resilience.
-
-### S17 — Redis Without Authentication
-`docker-compose.yml` starts Redis without `requirepass`. The internal network provides some isolation, but defense-in-depth would add auth.
-
-### S18 — PostgreSQL Default Credentials
-`docker-compose.yml:20-21` uses default credentials `smsbot:MyS3cur3Pssw0r`. While overridable via env vars, the default password is weak.
-
----
-
-## POSITIVE SECURITY FINDINGS
-
-1. ✓ **All secrets from environment** — `config.py` uses `_env()` with no hardcoded defaults for secrets
-2. ✓ **Parameterized queries** — All repositories use `%s` placeholders (except migration manager)
-3. ✓ **Row-level locking** — `SELECT ... FOR UPDATE` prevents race conditions on balance
-4. ✓ **Idempotent payments** — Double-check prevents double-crediting
-5. ✓ **RBAC with 6 roles** — Granular permission system for admin operations
-6. ✓ **Audit trail** — All admin actions logged to `audit_log` table
-7. ✓ **Anti-fraud engine** — Multi-layer detection with velocity, IP, fingerprint checks
-8. ✓ **Rate limiter exists** — PostgreSQL-backed token bucket (needs integration)
-9. ✓ **Non-root Docker user** — `Dockerfile:17` creates `botuser`
-10. ✓ **No SQLite in production** — All paths use PostgreSQL with psycopg2
-
----
-
-## OVERALL VERDICT
-
-**NEEDS REMEDIATION** — 3 CRITICAL issues (webhook auth, payment CSRF, git history secrets), 4 HIGH issues (SECRET_KEY default, SQL injection pattern, token exposure, missing rate limit integration).
-
-The security architecture is sound (RBAC, audit, anti-fraud, row locking, parameterized queries), but implementation gaps exist in webhook authentication and rate limiting.
-
-**Blocking for production:** Fix S1 (secret rotation), S2 (webhook verification), S3 (payment CSRF), S7 (rate limiter integration).
+*End of Phase I — Security Audit Report*

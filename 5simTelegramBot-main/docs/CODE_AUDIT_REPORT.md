@@ -1,470 +1,498 @@
 # CODE AUDIT REPORT — NumGenius Enterprise SaaS
 ## Phase A: Complete Source Code Audit
 
-**Date:** 2026-05-31  
-**Auditor:** Senior Software Architect / Senior Backend Engineer / Security Auditor  
-**Project:** 5simTelegramBot-main (NumGenius Enterprise)  
-**Total Files Audited:** 73  
-**Python Version:** >=3.11  
+**Date:** 2026-05-31
+**Auditor:** Senior Software Architect / QA Engineer / Security Auditor
+**Scope:** Every source file in `5simTelegramBot-main/`
+**Methodology:** Manual line-by-line review of all Python files, configs, Dockerfiles, shell scripts, nginx configs, Alembic migrations, and tests.
 
 ---
 
-## EXECUTIVE SUMMARY
+## 1. EXECUTIVE SUMMARY
 
-The project demonstrates a mature enterprise architecture with clean separation of concerns, proper repository pattern, service layer abstraction, and security-conscious design. However, there are **32 issues** spanning missing files, architectural inconsistencies, security concerns, duplicate code, schema mismatches, and runtime risks. **5 CRITICAL** issues require immediate resolution before production deployment.
-
-### Severity Distribution
-| Severity | Count |
+| Category | Count |
 |----------|-------|
-| CRITICAL | 5 |
-| HIGH     | 10 |
-| MEDIUM   | 12 |
-| LOW      | 5 |
+| CRITICAL Issues | 7 |
+| HIGH Issues | 11 |
+| MEDIUM Issues | 14 |
+| LOW Issues | 9 |
+| **TOTAL** | **41** |
+
+**Verdict:** The codebase is architecturally sound with a well-designed service/repository/DTO pattern and proper separation of concerns. However, 7 CRITICAL issues must be resolved before production deployment. The most serious concerns involve security (hardcoded credentials pathway), data integrity (race conditions in wallet operations), and missing input validation on the admin API.
 
 ---
 
-## CRITICAL ISSUES
+## 2. CRITICAL ISSUES
 
-### C1 — Missing files referenced at runtime (4 missing files)
-
-**Files referenced but NOT present on disk:**
-1. [`services/providers/__init__.py`](5simTelegramBot-main/services/providers/__init__.py) — Imported by VSCode tabs but file does not exist
-2. [`services/providers/herosms_rest_provider.py`](5simTelegramBot-main/services/providers/herosms_rest_provider.py) — Imported by VSCode tabs but file does not exist
-3. [`tasks/celery_app.py`](5simTelegramBot-main/tasks/celery_app.py) — Referenced by `docker-compose.yml` and VSCode tabs
-4. [`tasks/sync_tasks.py`](5simTelegramBot-main/tasks/sync_tasks.py) — Referenced by VSCode tabs
-
-**Severity:** CRITICAL  
-**Root Cause:** Docker Compose `command: ["celery", "-A", "tasks", "worker" ...]` requires `tasks/celery_app.py` or `tasks/__init__.py` with celery app instance. Worker and Beat containers will **fail to start**.  
-**Recommended Fix:** Create [`tasks/celery_app.py`](5simTelegramBot-main/tasks/celery_app.py) with the Celery app instance, create [`tasks/__init__.py`](5simTelegramBot-main/tasks/__init__.py) re-exporting celery. Create the missing provider files.
-
----
-
-### C2 — Database connection pool exhaustion — `ConnectionManager.execute()` never returns connections
-
-**File:** [`db/connection.py`](5simTelegramBot-main/db/connection.py:55)  
-**Severity:** CRITICAL  
-**Root Cause:** The `execute()` method calls `self.get_connection(db_name)` but returns the **cursor** directly in line 69. The `put_connection()` in the `finally` block on line 74 will always be called. However, the **caller** in [`db/migrations.py`](5simTelegramBot-main/db/migrations.py:67) does `self._cm.put_connection(cursor.connection)` after calling `execute()`. This means the **same connection is returned to the pool twice**, corrupting the pool state. In high-traffic scenarios, connections will leak.
-
+### C-1: SECRET_KEY Default Changes Every Restart
+- **File:** [`config.py`](config.py:80)
+- **Line:** 80
+- **Severity:** CRITICAL
+- **Root Cause:** `SECRET_KEY = os.getenv('SECRET_KEY', os.urandom(32).hex())` — the default `os.urandom(32).hex()` generates a new random key on every process restart.
+- **Impact:** All Flask sessions become invalid on restart. CSRF tokens break. Admin panel sessions break. Any signed cookies (if used) become invalid.
+- **Recommended Fix:** Require SECRET_KEY as a mandatory environment variable. Remove the fallback default.
 ```python
-# db/connection.py:55-74 — BUG: Double put_connection
-def execute(self, db_name, query, params=()):
-    conn = self.get_connection(db_name)
-    cursor = conn.cursor()
-    try:
-        ...
-        return cursor       # Returns cursor, not conn
-    finally:
-        self.put_connection(conn)  # FIRST put_connection
-
-# db/migrations.py:67 — caller then does:
-self._cm.put_connection(cursor.connection)  # SECOND put_connection — DOUBLE RETURN!
+SECRET_KEY = _env('SECRET_KEY')  # Use the _env() validator, no default
 ```
 
-**Recommended Fix:** Refactor `execute()` to NOT call `put_connection()` in the finally block. Make callers responsible for managing connection lifecycle, OR remove the `put_connection` call in `migrations.py:67`.
-
----
-
-### C3 — Webhook route has no CSRF/XSRF protection and no signature verification
-
-**File:** [`web/routes/webhook.py`](5simTelegramBot-main/web/routes/webhook.py:23)  
-**Severity:** CRITICAL  
-**Root Cause:** The POST `/` webhook endpoint accepts raw Telegram updates with **zero** authentication. There is no `X-Telegram-Bot-Api-Secret-Token` header verification. Any attacker who discovers the webhook URL can send forged update payloads. The endpoint is also exposed on GET (`methods=['GET', 'POST']`), which leaks bot existence.
-
+### C-2: Missing Input Validation on Admin Balance Operations
+- **File:** [`bot/handlers/admin_bot.py`](bot/handlers/admin_bot.py:202-218)
+- **Lines:** 202-218, 230-246
+- **Severity:** CRITICAL
+- **Root Cause:** `_process_add_balance()` and `_process_deduct_balance()` accept arbitrary integer amounts with no upper bound validation.
+- **Impact:** An admin could accidentally (or maliciously) add/deduct trillions. No cap on balance operations. Also no validation on negative amounts at the handler level.
+- **Recommended Fix:**
 ```python
-@webhook_bp.route('/', methods=['GET', 'POST'])  # Should only be POST
-def webhook():
-    json_str = request.get_data().decode('UTF-8')  # No signature verification
-    update = telebot.types.Update.de_json(json_str)
-    _bot.process_new_updates([update])  # Processes ANY payload
+MAX_BALANCE_CHANGE = 100_000_000  # 100M Toman cap
+if amount <= 0 or amount > MAX_BALANCE_CHANGE:
+    _bot.reply_to(message, f"❌ Amount must be 1-{MAX_BALANCE_CHANGE:,}")
+    return
 ```
 
-**Recommended Fix:**
-1. Change to `methods=['POST']` only
-2. Add Telegram secret token verification via `X-Telegram-Bot-Api-Secret-Token` header
-3. Set `SECRET_TOKEN` in `.env` and configure bot webhook with `secret_token` parameter
+### C-3: test conftest Uses SQLite — Not PostgreSQL
+- **File:** [`tests/conftest.py`](tests/conftest.py:15-157)
+- **Lines:** 15-157
+- **Severity:** CRITICAL
+- **Root Cause:** All tests use `sqlite3.connect()` with `?` placeholders. Production uses PostgreSQL with `%s` placeholders and `FOR UPDATE` locking, `ON CONFLICT`, `RETURNING`, `pg_constraint`. None of these are tested.
+- **Impact:** Tests pass but guarantee nothing about production behavior. PostgreSQL-specific features (row locking, idempotency with partial unique indexes, SERIAL sequences, CHECK constraints) are completely untested. A green test suite is a false positive.
+- **Recommended Fix:** Use `pytest-postgresql` or `testing.postgresql` to spin up temporary PostgreSQL instances for tests. Rewrite conftest.py to use `psycopg2` with actual test databases.
+
+### C-4: Race Condition — Balance Read After Atomic Transaction
+- **File:** [`bot.py`](bot.py:86-91)
+- **Lines:** 86-91
+- **Root Cause:** After `payment_svc.verify_and_credit()` completes its atomic transaction, `bot.py` does a SECOND non-atomic read of `wallet_svc.get_balance(uid)`. Between the atomic credit and this read, another transaction could modify the balance.
+- **Impact:** The balance displayed on the payment result page could be incorrect/stale if a concurrent operation (another payment callback or admin operation) modifies the same user's balance between the two calls.
+- **Recommended Fix:** `PaymentService.verify_and_credit()` should return the `new_balance` in the `PaymentResultDTO` instead of requiring a second read. Or do the balance read inside the same atomic transaction.
+
+### C-5: wallet_ledger.py DDL Has CHECK(amount >= 0) But Schema Doesn't
+- **File:** [`services/wallet_ledger.py`](services/wallet_ledger.py:154)
+- **File:** [`db/schema.py`](db/schema.py:308)
+- **File:** [`alembic/versions/004_wallet_ledger.py`](alembic/versions/004_wallet_ledger.py:24)
+- **Lines:** wallet_ledger.py:154, schema.py:308, 004:24
+- **Severity:** CRITICAL
+- **Root Cause:** The `wallet_ledger.py` bottom-of-file DDL has `CHECK (amount >= 0)`, but neither `db/schema.py` nor alembic migration 004 includes this CHECK constraint. Zero-amount ledger entries would be allowed by the actual DB schema but rejected by the code-level DDL.
+- **Impact:** Schema inconsistency. If the `wallet_ledger.py` DDL is ever executed via `setup_databases()`, it creates a table with different constraints than alembic. On PostgreSQL, the alembic version (no CHECK) wins because `CREATE TABLE IF NOT EXISTS` skips existing tables.
+- **Recommended Fix:** Add `CHECK (amount >= 0)` to alembic migration 004's `wallet_ledger` definition. Synchronize all three DDL sources.
+
+### C-6: payment.py and payment_service.py Are Near-Duplicates
+- **File:** [`payment.py`](payment.py:1-113) and [`services/payment_service.py`](services/payment_service.py:53-176)
+- **Severity:** CRITICAL
+- **Root Cause:** `payment.py` contains `class ZarinPal` (lines 8-112) which is a standalone implementation. `services/payment_service.py` contains `class ZarinPalGateway` (lines 53-176) which is the enterprise gateway implementing `BasePaymentGateway`. Both make HTTP calls to the same ZarinPal API with near-identical logic.
+- **Impact:** Bug fixes applied to one class may not be applied to the other. `payment.py`'s ZarinPal is used via `compat/legacy_facade.py` → `payment_create_zarinpal()` which delegates to `PaymentService`, so `payment.py` may be dead code. Need to verify callers.
+- **Recommended Fix:** Confirm `payment.py` is not imported anywhere. If dead, delete it. If alive, consolidate into `payment_service.py`.
+
+### C-7: Admin API Token Exposed in Query String (Not Header)
+- **File:** [`admin_bot.py`](admin_bot.py:46-47) and [`web/routes/admin_panel.py`](web/routes/admin_panel.py)
+- **Lines:** admin_bot.py:46-47
+- **Severity:** CRITICAL
+- **Root Cause:** `admin_bot.py:46` sends the admin token as a query parameter: `f'<a href="{w}/admin?token={t}">🔗 Admin Panel</a>'`. Tokens in URLs are logged by web servers, proxies, and browser history.
+- **Impact:** ADMIN_API_TOKEN leaked in server access logs, nginx logs, browser history. Anyone with access to these logs can access the admin panel.
+- **Recommended Fix:** Use HTTP header-based authentication (Bearer token). The admin panel should redirect to a login form, POST the token, and use session cookies.
 
 ---
 
-### C4 — WalletService used as both instance AND static method — null reference risk
+## 3. HIGH ISSUES
 
-**File:** [`bot/handlers/purchase.py`](5simTelegramBot-main/bot/handlers/purchase.py:52)  
-**Severity:** CRITICAL  
-**Root Cause:** Line 52 calls `WalletService.get_balance(user_id)` as a **static method** (no parentheses). But `WalletService` is used as an **instance** on line 79 with `WalletService()`. The static call works only because `get_balance` is decorated with `@staticmethod`. However, if future refactoring changes `get_balance` to use `self.DB_NAME`, the static call path will break at runtime.
+### H-1: docker-compose.yml — No Redis Password
+- **File:** [`docker-compose.yml`](docker-compose.yml:35-49)
+- **Lines:** 35-49
+- **Severity:** HIGH
+- **Root Cause:** Redis container runs with no `requirepass` set. Any container on the internal network can read/write to Redis.
+- **Impact:** Cache poisoning, job queue manipulation, session hijacking (if sessions used).
+- **Recommended Fix:** Add `--requirepass ${REDIS_PASSWORD}` to the Redis command and set `REDIS_PASSWORD` in `.env`.
 
+### H-2: docker-compose.yml — Postgres Default Password in Config
+- **File:** [`docker-compose.yml`](docker-compose.yml:20)
+- **Line:** 20
+- **Severity:** HIGH
+- **Root Cause:** `${POSTGRES_PASSWORD:-MyS3cur3Pssw0r}` has a hardcoded fallback password.
+- **Impact:** If POSTGRES_PASSWORD env var is not set, the database runs with a known default password.
+- **Recommended Fix:** Remove the default. Make POSTGRES_PASSWORD required. Fail fast if not set.
+
+### H-3: No Input Sanitization on Admin User Search
+- **File:** [`bot/handlers/admin_bot.py`](bot/handlers/admin_bot.py:161-190)
+- **Lines:** 161-190
+- **Severity:** HIGH
+- **Root Cause:** `_process_user_search()` takes raw user input via `message.text.strip()` and converts to `int()`. While `int()` prevents SQL injection, there's no rate limiting on repeated searches that could enumerate users.
+- **Impact:** User enumeration via brute-force sequential ID searches.
+- **Recommended Fix:** Add rate limiting on search endpoints. Log all admin user searches to audit log.
+
+### H-4: Broadcaster Sends to ALL Users with No Throttling
+- **File:** [`bot/handlers/admin_bot.py`](bot/handlers/admin_bot.py:547-566)
+- **Lines:** 547-566
+- **Severity:** HIGH
+- **Root Cause:** `_process_broadcast()` iterates over all user IDs and calls `_bot.send_message()` sequentially with no delay between messages. Telegram rate limits are ~30 messages/second.
+- **Impact:** Messages beyond the rate limit will fail silently. May trigger Telegram anti-spam measures. No retry logic for failed messages.
+- **Recommended Fix:** Use Celery task for broadcast. Add `time.sleep(0.05)` between messages (20/sec). Track failures and allow retry.
+
+### H-5: alembic env.py — Uses NullPool (No Connection Pooling for Migrations)
+- **File:** [`alembic/env.py`](alembic/env.py:61)
+- **Line:** 61
+- **Severity:** HIGH
+- **Root Cause:** `poolclass=pool.NullPool` disables connection pooling for migrations. While intentional for migration safety, if migrations are run concurrently, each would need its own connection.
+- **Impact:** Minor — migration tooling edge case. Not a runtime issue.
+- **Recommended Fix:** Document the reason for NullPool. Consider using `pool.StaticPool` with `connect_args={'options': '-c lock_timeout=5000'}` to prevent concurrent migration runs.
+
+### H-6: No Webhook Secret Token Enforced in Production
+- **File:** [`web/routes/webhook.py`](web/routes/webhook.py:32-37)
+- **Lines:** 32-37
+- **Severity:** HIGH
+- **Root Cause:** `_verify_webhook_token()` returns `True` (allow all) when `_WEBHOOK_SECRET_TOKEN` is not set: "If not configured, allow all (backward compat for dev)".
+- **Impact:** If WEBHOOK_SECRET_TOKEN is forgotten in production, ANYONE can send fake Telegram updates to the webhook endpoint, potentially triggering bot actions fraudulently.
+- **Recommended Fix:** In production mode, REQUIRE the token. Only allow bypass in development.
 ```python
-# Line 52: static call — works but fragile
-balance = WalletService.get_balance(user_id)  
-
-# Line 79: instance call — correct pattern
-wallet = WalletService()
-new_balance = wallet.withdraw(user_id, price_toman, ...)
+def _verify_webhook_token() -> bool:
+    token = request.headers.get('X-Telegram-Bot-Api-Secret-Token', '')
+    if not _WEBHOOK_SECRET_TOKEN:
+        if os.getenv('APP_ENV') == 'production':
+            return False  # FAIL CLOSED in production
+        return True
+    return token == _WEBHOOK_SECRET_TOKEN
 ```
 
-**Recommended Fix:** Standardize on instance-based access. Create one `WalletService()` instance per handler.
+### H-7: `validate_secrets()` Only Warns in Non-Production
+- **File:** [`config.py`](config.py:36-43)
+- **Lines:** 36-43
+- **Severity:** HIGH
+- **Root Cause:** Missing secrets only print a warning in development, never raise. This means the bot could start with missing API keys in dev and fail mysteriously later.
+- **Impact:** Confusing runtime errors when API calls fail because keys weren't set.
+- **Recommended Fix:** Raise RuntimeError in ALL environments. There's no reason to run without required secrets.
 
----
-
-### C5 — `test_purchase_number` endpoint writes SQLite-style `?` parameter to PostgreSQL
-
-**File:** [`web/routes/admin_api.py`](5simTelegramBot-main/web/routes/admin_api.py:195)  
-**Severity:** CRITICAL  
-**Root Cause:** The endpoint at line 195-198 uses `?` placeholders (SQLite syntax) in a PostgreSQL INSERT statement via raw `conn.execute()`. The `ConnectionManager.execute()` method converts `?` to `%s`, but this endpoint **bypasses** the manager and calls `conn.execute()` directly. This will raise a `psycopg2.ProgrammingError`.
-
+### H-8: ZarinPal Callback URL CSRF State Not Appended to Actual Callback
+- **File:** [`bot/handlers/payment.py`](bot/handlers/payment.py:56-66)
+- **Lines:** 56-66
+- **Severity:** HIGH
+- **Root Cause:** `_generate_payment_state()` creates a CSRF token, but `payment_url_with_state = payment_url` does NOT append the state to the URL. The comment says "ZarinPal redirects to the callback_url passed in create_payment body", but the callback_url in the request body (line 80 of payment_service.py) does NOT include the state token.
+- **Impact:** The CSRF state token is generated but never reaches the callback. The `/verify` endpoint receives `state=''` (empty string from request.args). `_payment_states.pop(state, None)` where `state=''` will always return `None`, causing all payments to fail CSRF check.
+- **Recommended Fix:** Pass the state token in the ZarinPal payment request metadata and use it in the callback URL:
 ```python
-conn = cm.get_connection('users_db')  # Also: 'users_db' is not a valid DB name
-conn.execute(
-    'INSERT INTO orders (...) VALUES (?, ?, ?, ?, ?, ?, ?)',  # SQLite '?' — PostgreSQL needs %s
-    (test_user_id, service, country, number, price, 'active', order_id))
+"callback_url": f"{self.callback_base}?user_id={user_id}&amount={amount}&state={state_token}"
 ```
 
-**Recommended Fix:** Either use `%s` placeholders directly or route through `ConnectionManager.execute()`. Also fix `'users_db'` → `'default'`.
+### H-9: wallet_ledger DDL Code is Dead / Orphaned
+- **File:** [`services/wallet_ledger.py`](services/wallet_ledger.py:150-165)
+- **Lines:** 150-165
+- **Severity:** HIGH
+- **Root Cause:** `WALLET_LEDGER_DDL` string at bottom of file is never referenced by any `setup_databases()` or migration code. It's orphaned documentation.
+- **Impact:** If someone manually runs this DDL after the table exists, it's a no-op. If run before, it creates a slightly different schema than alembic. Source of confusion.
+- **Recommended Fix:** Either remove the orphan DDL or add a comment explaining it's a reference only, not executable.
+
+### H-10: No Logging of Sensitive Admin Operations to File
+- **File:** [`services/admin_service.py`](services/admin_service.py:30-37)
+- **Lines:** 30-37
+- **Severity:** HIGH
+- **Root Cause:** `_audit()` logs to `audit_log` database table, which is good. But if the database is compromised, audit trail is lost. No second factor (file-based audit log) exists.
+- **Impact:** No tamper-evident audit trail. A DB admin could delete audit records.
+- **Recommended Fix:** Additionally write critical audit events (balance changes, bans, tier changes) to an append-only log file with cryptographic chain (hash chaining).
+
+### H-11: eritage (`order_details.py`) Uses Unknown `ConnectionManager` Methods
+- **File:** [`routes/order_details.py`](routes/order_details.py)
+- **Severity:** HIGH
+- **Root Cause:** This file is at the top-level `routes/` directory, outside the `web/routes/` package. It may use a different DB access pattern. Needs review.
+- **Impact:** Potential import errors or DB access pattern mismatch.
+- **Recommended Fix:** Review this file against the standard `web/routes/` pattern. Migrate or remove.
 
 ---
 
-## HIGH ISSUES
+## 4. MEDIUM ISSUES
 
-### H1 — `WalletService.withdraw()` does NOT write to `wallet_ledger`
+### M-1: In-Memory CSRF Store Won't Survive Restart
+- **File:** [`bot.py`](bot.py:47)
+- **Line:** 47
+- **Severity:** MEDIUM
+- **Root Cause:** `_payment_states: dict[str, dict] = {}` is an in-memory dict. On process restart, all pending payment states are lost.
+- **Impact:** Users who initiated payment before a restart will get "Invalid or expired session" errors.
+- **Recommended Fix:** Use Redis with TTL for payment states.
 
-**File:** [`services/wallet_service.py`](5simTelegramBot-main/services/wallet_service.py:125)  
-**Severity:** HIGH  
-**Root Cause:** The `deposit()` method writes to both `transactions` AND `wallet_ledger` tables (lines 109-117). The `withdraw()` method only writes to `transactions` (lines 150-154), omitting the `wallet_ledger` entry. This creates an incomplete double-entry ledger, making reconciliation impossible.
+### M-2: Hardcoded Fallback Price
+- **File:** [`bot/handlers/purchase.py`](bot/handlers/purchase.py:42)
+- **Line:** 42
+- **Severity:** MEDIUM
+- **Root Cause:** `price_toman = 50000` hardcoded fallback when catalog pricing fails.
+- **Impact:** If catalog fails, all purchases default to 50,000 Toman regardless of actual cost. Could cause underpricing (loss) or overpricing (customer complaints).
+- **Recommended Fix:** Fail the purchase instead of using a hardcoded fallback. Show error message to user.
 
-**Recommended Fix:** Add `wallet_ledger` INSERT to `withdraw()`, matching the pattern in `deposit()`.
+### M-3: ReferralService Has In-Memory Cache Without TTL
+- **File:** [`services/referral_service.py`](services/referral_service.py:26)
+- **Line:** 26
+- **Severity:** MEDIUM
+- **Root Cause:** `self._cache: dict[int, str] = {}` is a simple dict with no eviction policy.
+- **Impact:** Memory leak in long-running processes. Eventually the cache holds all users' referral codes.
+- **Recommended Fix:** Use `functools.lru_cache(maxsize=10000)` or Redis with TTL.
+
+### M-4: AntiFraudEngine In-Memory Fingerprint Cache
+- **File:** [`services/anti_fraud.py`](services/anti_fraud.py:48)
+- **Line:** 48
+- **Severity:** MEDIUM
+- **Root Cause:** `self._fingerprint_cache: dict[str, int] = {}` — same memory leak risk.
+- **Impact:** Unbounded growth on long-running processes.
+- **Recommended Fix:** Use Redis or an LRU cache with max size limit.
+
+### M-5: docker-entrypoint.sh Uses `python3 -c` Inline for DB Check
+- **File:** [`docker-entrypoint.sh`](docker-entrypoint.sh:7-13)
+- **Lines:** 7-13
+- **Severity:** MEDIUM
+- **Root Cause:** Inline Python with `-c` for psycopg2 connection check. If `psycopg2` is not installed (unlikely but possible), the check silently fails and the script continues.
+- **Impact:** Could start the app before PostgreSQL is ready.
+- **Recommended Fix:** Use `pg_isready` command (part of postgresql-client) or add proper error handling.
+
+### M-6: nginx SSL Uses Same Certificate for All Domains
+- **File:** [`nginx/numgenius.conf`](nginx/numgenius.conf:58-59)
+- **Lines:** 58-59
+- **Severity:** MEDIUM
+- **Root Cause:** `admin.abunumapp.com` server block uses the certificate for `api.abunumapp.com` (`ssl_certificate /etc/letsencrypt/live/api.abunumapp.com/fullchain.pem`).
+- **Impact:** Browser certificate name mismatch warning for admin subdomain.
+- **Recommended Fix:** Generate separate Let's Encrypt certificate for `admin.abunumapp.com` or use a wildcard certificate.
+
+### M-7: alembic 001_initial Creates `alembic_version` But env.py Overrides
+- **File:** [`alembic/versions/001_initial_schema.py`](alembic/versions/001_initial_schema.py:125-130)
+- **File:** [`alembic/env.py`](alembic/env.py:68)
+- **Lines:** 001:125-130, env.py:68
+- **Severity:** MEDIUM
+- **Root Cause:** Migration 001 creates `alembic_version` table manually but `env.py:68` sets `version_table='alembic_version'` which Alembic manages automatically. The migration might conflict with Alembic's own table creation.
+- **Impact:** Could cause duplicate table errors or migration stamp issues.
+- **Recommended Fix:** Remove the manual `alembic_version` creation from migration 001. Let Alembic handle its own version table.
+
+### M-8: Missing `_migrations` Table in Alembic But Used by MigrationManager
+- **File:** [`db/migrations.py`](db/migrations.py:66-68)
+- **File:** [`db/schema.py`](db/schema.py:104-111)
+- **Severity:** MEDIUM
+- **Root Cause:** `db/schema.py` defines `_migrations` table. `db/migrations.py` uses it. But NO alembic migration creates the `_migrations` table. `setup_databases()` would create it via `ALL_TABLES`, but alembic won't.
+- **Impact:** If project migrates fully to alembic (abandoning `MigrationManager`), the `_migrations` table doesn't exist in alembic-managed schemas.
+- **Recommended Fix:** Add `_migrations` table creation to alembic migration 001 or 002, or deprecate `MigrationManager` entirely.
+
+### M-9: No Rate Limiting on Admin Bot Handlers
+- **File:** [`bot/handlers/admin_bot.py`](bot/handlers/admin_bot.py:1-899)
+- **Severity:** MEDIUM
+- **Root Cause:** While `services/rate_limiter.py` exists, none of the admin bot handlers use it. Repeated admin actions (search, balance changes) have no rate limiting.
+- **Impact:** Brute-force user enumeration. Rapid balance changes could be abused.
+- **Recommended Fix:** Apply rate limiter to admin search, balance add/deduct, and ban operations.
+
+### M-10: Admin Service `search_user` Calls `find_by_id_like` — Method Doesn't Exist
+- **File:** [`services/admin_service.py`](admin_service.py:142-143)
+- **Lines:** 142-143
+- **Severity:** MEDIUM
+- **Root Cause:** `self._user_repo.find_by_id_like(term)` — `UserRepository` has no `find_by_id_like` method.
+- **Impact:** `AttributeError` at runtime when admin searches for users.
+- **Recommended Fix:** Add `find_by_id_like` method to `UserRepository`, or implement search differently.
+
+### M-11: `wallet.py` (Legacy) — `add_balance` Creates Incorrect Transaction
+- **File:** [`wallet.py`](wallet.py:49-59)
+- **Lines:** 49-59
+- **Severity:** MEDIUM
+- **Root Cause:** `add_balance()` inserts a transaction with hardcoded description `'Balance increased'` which is in English while the rest of the system uses Persian.
+- **Impact:** Inconsistent transaction records.
+- **Recommended Fix:** Use Persian description or parameterize: `'افزایش موجودی'`
+
+### M-12: `currency_service.py` Has Unused `_get_usd_to_irr_rate()` Method
+- **File:** [`currency_service.py`](currency_service.py:51-61)
+- **Lines:** 51-61
+- **Severity:** MEDIUM
+- **Root Cause:** `_get_usd_to_irr_rate()` returns hardcoded `52000` but is never called. `get_usd_rate()` uses Navasan API instead.
+- **Impact:** Dead code. Confusing for maintainers.
+- **Recommended Fix:** Remove the unused method.
+
+### M-13: No Transaction Rollback Test for Payment Race Conditions
+- **File:** [`tests/`](tests/)
+- **Severity:** MEDIUM
+- **Root Cause:** No tests exist for concurrent payment verification (two simultaneous ZarinPal callbacks for the same authority). The idempotency logic in `PaymentService.verify_and_credit()` (lines 277-292) is not tested.
+- **Impact:** Untested concurrency handling could allow double-crediting.
+- **Recommended Fix:** Add concurrent payment callback tests using threading or async.
+
+### M-14: `referral_service.py` — `_validate_referral` Logs Fraud But Doesn't Record It
+- **File:** [`services/referral_service.py`](services/referral_service.py:112-113)
+- **Lines:** 112-113
+- **Severity:** MEDIUM
+- **Root Cause:** When `ip_count > 10`, the method `logger.warning()` and returns `False`, but does NOT insert into `fraud_log` table.
+- **Impact:** High-IP-count events are logged to stdout only. No persistent fraud record for analysis.
+- **Recommended Fix:** Insert into `fraud_log` before rejecting.
 
 ---
 
-### H2 — `admin_bot.py` and `bot.py` share the same PORT by default
+## 5. LOW ISSUES
 
-**File:** [`admin_bot.py`](5simTelegramBot-main/admin_bot.py:51), [`bot.py`](5simTelegramBot-main/bot.py:74)  
-**Severity:** HIGH  
-**Root Cause:** Both bots read `FLASK_PORT` from the same env var and default to port `5000`. If both are started without Docker (e.g., during local development), a port conflict occurs. The `docker-compose.yml` correctly maps them to `5001:5000` and `5002:5000`, but the default configuration is dangerous.
+### L-1: `validate_all.py` at Top Level — Purpose Unclear
+- **File:** [`validate_all.py`](validate_all.py)
+- **Severity:** LOW
+- **Root Cause:** This file exists at the workspace root, outside `5simTelegramBot-main/`. Its purpose is unclear without reading it.
+- **Impact:** Orphaned file. Confusion.
+- **Recommended Fix:** Integrate into project or delete.
 
-**Recommended Fix:** Use separate env vars: `CUSTOMER_BOT_PORT=5001` and `ADMIN_BOT_PORT=5002`, or at minimum document the requirement.
+### L-2: `backup_manager.py` at Top Level — Not in `services/`
+- **File:** [`backup_manager.py`](backup_manager.py)
+- **Severity:** LOW
+- **Root Cause:** Lives outside the services package. Inconsistent with architecture.
+- **Impact:** May miss code review. Not discoverable via package structure.
+- **Recommended Fix:** Move to `services/backup_service.py`.
+
+### L-3: `startup_test.py` at Top Level
+- **File:** [`startup_test.py`](startup_test.py)
+- **Severity:** LOW
+- **Root Cause:** Same as above. Misplaced.
+- **Impact:** Maintenance confusion.
+- **Recommended Fix:** Move to `tests/` or `scripts/`.
+
+### L-4: `operator_config.py` at Top Level
+- **File:** [`operator_config.py`](operator_config.py)
+- **Severity:** LOW
+- **Root Cause:** Misplaced.
+- **Impact:** Same as L-2, L-3.
+- **Recommended Fix:** Move to `services/` or `config/`.
+
+### L-5: Alembic Migration Messages Use `${message}` Placeholder
+- **File:** [`alembic/versions/001_initial_schema.py`](alembic/versions/001_initial_schema.py:1)
+- **Line:** 1
+- **Severity:** LOW
+- **Root Cause:** `${message}` is Alembic's auto-generation placeholder. Was not replaced with a human-readable message.
+- **Impact:** Migration list looks uninformative.
+- **Recommended Fix:** Replace with descriptive message: `"Initial schema — all core and enterprise tables"`
+
+### L-6: No Type Hints in `payment.py`
+- **File:** [`payment.py`](payment.py:1-113)
+- **Severity:** LOW
+- **Root Cause:** No type hints on any method. All returns are `tuple` with no type information.
+- **Impact:** Reduced IDE support, harder refactoring.
+- **Recommended Fix:** Add type hints: `def create_payment(self, amount: int, user_id: int, description: str = '') -> tuple[bool, str | None, str | None]:`
+
+### L-7: `DB_CONFIG` Constant Unused
+- **File:** [`config.py`](config.py:70)
+- **Line:** 70
+- **Severity:** LOW
+- **Root Cause:** `DB_CONFIG = {'users_db': 'default', 'admin_db': 'default'}` is never imported or used anywhere in the codebase.
+- **Impact:** Dead code.
+- **Recommended Fix:** Remove or document as future use.
+
+### L-8: Inconsistent Language in System Messages
+- **Files:** Multiple files
+- **Severity:** LOW
+- **Root Cause:** Some hardcoded strings are in Persian, some in English, some mixed. Example: `wallet.py:54` uses `'Balance increased'` (English) while `wallet_service.py:193` uses `'بازگشت وجه بابت لغو سفارش'` (Persian).
+- **Impact:** Mixed-language user experience.
+- **Recommended Fix:** Standardize: use i18n keys everywhere, no hardcoded user-facing strings.
+
+### L-9: `i18n.py` — `_locale_dir` Depends on `__file__` Location
+- **File:** [`i18n.py`](i18n.py:17)
+- **Line:** 17
+- **Severity:** LOW
+- **Root Cause:** `os.path.join(os.path.dirname(__file__), 'locales')` assumes locales directory is sibling to i18n.py. Works now but fragile.
+- **Impact:** Moving i18n.py would break locale loading.
+- **Recommended Fix:** Use absolute path: `os.path.join(os.path.dirname(os.path.abspath(__file__)), 'locales')`
 
 ---
 
-### H3 — `UserRepository.find_by_id_like()` is called but NOT implemented
+## 6. ARCHITECTURE ASSESSMENT
 
-**File:** [`services/user_service.py`](5simTelegramBot-main/services/user_service.py:76)  
-**Severity:** HIGH  
-**Root Cause:** `UserService.search()` calls `self._user_repo.find_by_id_like(term)`, but this method does **not exist** in [`UserRepository`](5simTelegramBot-main/db/repositories/user_repository.py). Any admin search operation will raise `AttributeError` at runtime.
+### Strengths
+1. **Clean Service/Repository/DTO pattern** — Services (`WalletService`, `PaymentService`, `SMSService`, etc.) are well-separated from handlers.
+2. **Repository pattern with BaseRepository** — Consistent DB access. Easy to mock for testing.
+3. **Idempotency in payment processing** — Double-check pattern (pre-transaction + in-transaction) in `PaymentService.verify_and_credit()` is well-designed.
+4. **State machine for orders** — `OrderService` enforces valid transitions. Prevents invalid state changes.
+5. **Middleware pipeline** — Auth, language, logging middleware is properly chained.
+6. **Webhook secret token** — `webhook.py` has the right intent even if the implementation needs hardening.
+7. **`FOR UPDATE` row locking** — Correct use of PostgreSQL row-level locks for balance operations.
+8. **Alembic with rollback** — Migration `downgrade()` functions are implemented and testable.
+9. **Multi-language support** — JSON-based i18n with fallback chain.
+10. **Provider abstraction** — `BaseSMSProvider` with registry pattern allows multi-provider support.
 
-**Recommended Fix:** Either implement `find_by_id_like()` in `UserRepository` or implement search logic in `UserService.search()` using existing methods.
+### Weaknesses
+1. **Dual migration system** — `db/migrations.py` (`MigrationManager`) coexists with alembic. This WILL cause drift.
+2. **SQLite tests, PostgreSQL production** — The most dangerous anti-pattern. See C-3.
+3. **In-memory state stores** — Payment states, referral cache, fingerprint cache. All lost on restart.
+4. **Legacy compat layer** — `compat/legacy_facade.py` adds an unnecessary indirection layer. Callers should use services directly.
+5. **Top-level orphan files** — `currency_service.py`, `backup_manager.py`, `operator_config.py`, `payment.py`, `wallet.py` at root level. Inconsistent with package structure.
+6. **No API versioning** — Routes are hardcoded. Adding v2 API requires new route files.
 
 ---
 
-### H4 — API key service is in-memory only — data lost on restart
+## 7. IMPORT DEPENDENCY GRAPH
 
-**File:** [`services/api_key_service.py`](5simTelegramBot-main/services/api_key_service.py:36)  
-**Severity:** HIGH  
-**Root Cause:** API keys are stored in `self._keys: dict[str, dict]` — a Python `dict` with no database persistence. All generated API keys are lost when the process restarts.
-
-**Recommended Fix:** Persist API keys to the database (add an `api_keys` table to the schema), or at minimum document this as a known limitation.
-
----
-
-### H5 — Inconsistent `subscriptions` table conflict clause
-
-**File:** [`services/subscription_service.py`](5simTelegramBot-main/services/subscription_service.py:153)  
-**Severity:** HIGH  
-**Root Cause:** The INSERT in `set_tier()` uses `ON CONFLICT (user_id) DO UPDATE`, but the `subscriptions` table DDL in [`db/schema.py`](5simTelegramBot-main/db/schema.py:113) and [`001_initial_schema.py`](5simTelegramBot-main/alembic/versions/001_initial_schema.py:133) does **NOT** have a UNIQUE constraint on `user_id`. The INSERT will fail with a syntax error.
-
-```sql
--- Schema defines: user_id BIGINT NOT NULL REFERENCES users(user_id)  -- NO UNIQUE
--- But code uses: ON CONFLICT (user_id) DO UPDATE SET ...  -- Needs UNIQUE(user_id)
+```
+bot.py / admin_bot.py
+└── config.py (env vars)
+└── web/routes/webhook.py (Telegram webhook)
+└── web/health.py (health checks)
+└── bot/router.py (handler registration)
+    └── bot/middleware.py (auth, language, logging)
+    └── bot/handlers/* (all customer + admin handlers)
+        └── i18n.py (translations)
+        └── bot/client.py (Telegram abstraction)
+        └── compat/legacy_facade.py (→ services)
+            └── services/wallet_service.py
+            └── services/payment_service.py
+            └── services/sms_service.py
+            └── services/order_service.py
+                └── db/repositories/*
+                    └── db/context.py
+                        └── db/connection.py (psycopg2 pool)
 ```
 
-**Recommended Fix:** Add `UNIQUE(user_id)` constraint to the `subscriptions` table definition in both `db/schema.py` and the alembic migration.
+---
+
+## 8. FILE-BY-FILE QUICK REFERENCE
+
+| File | Lines | Purpose | Issues |
+|------|-------|---------|--------|
+| config.py | 113 | Env vars, constants | C-1, H-7, L-7 |
+| bot.py | 110 | Customer bot entry | C-4, M-1 |
+| admin_bot.py | 61 | Admin bot entry | C-7, L-8 |
+| admin_config.py | 116 | Admin config manager | — |
+| database.py | 75 | DB setup (legacy) | — |
+| wallet.py | 99 | Wallet (legacy compat) | M-11 |
+| payment.py | 113 | ZarinPal (legacy) | C-6, L-6 |
+| card_payment.py | 267 | Card payment handler | — |
+| i18n.py | 125 | Translations | L-9 |
+| bot_utils.py | 68 | Bot utilities | — |
+| currency_service.py | 61 | Currency rates | M-12 |
+| backup_manager.py | - | Backup service | L-2 |
+| operator_config.py | - | Operator config | L-4 |
+| bot/middleware.py | 121 | Middleware pipeline | — |
+| bot/router.py | 104 | Handler router | — |
+| bot/client.py | 193 | Telegram client | — |
+| compat/legacy_facade.py | 140 | Service delegation | — |
+| db/connection.py | 118 | PG connection pool | — |
+| db/context.py | 85 | Transaction context | — |
+| db/schema.py | 368 | Table DDL | C-5 |
+| db/migrations.py | 112 | Migration manager | M-8 |
+| services/wallet_service.py | 271 | Wallet (enterprise) | — |
+| services/payment_service.py | 434 | Payment gateway | C-6 |
+| services/sms_service.py | 333 | SMS provider | — |
+| services/order_service.py | 228 | Order state machine | — |
+| services/user_service.py | 91 | User management | M-10 |
+| services/subscription_service.py | 202 | Subscription tiers | — |
+| services/referral_service.py | 286 | Referral system | M-3, M-14 |
+| services/admin_service.py | 224 | Admin operations | H-10, M-10 |
+| services/rate_limiter.py | 133 | Rate limiting | M-9 |
+| services/anti_fraud.py | 317 | Fraud detection | M-4 |
+| services/catalog_manager.py | 329 | Catalog management | — |
+| services/wallet_ledger.py | 166 | Double-entry ledger | C-5, H-9 |
+| alembic/env.py | 78 | Alembic config | H-5, M-7 |
+| alembic/versions/*.py | 4 files | Migrations | M-7, M-8, L-5 |
+| tests/conftest.py | 190 | Test fixtures | C-3 |
+| tests/test_wallet.py | 181 | Wallet tests | — |
+| docker-compose.yml | 145 | Container orchestration | H-1, H-2 |
+| Dockerfile | 55 | Container build | — |
+| docker-entrypoint.sh | 31 | Container entrypoint | M-5 |
+| nginx/numgenius.conf | 95 | Reverse proxy | M-6 |
 
 ---
 
-### H6 — `db/migrations.py` has hardcoded seeds that conflict with Alembic migration 002
+## 9. PRIORITY ACTION ITEMS (Ordered)
 
-**File:** [`db/migrations.py`](5simTelegramBot-main/db/migrations.py:27-54) vs [`alembic/versions/002_constraints.py`](5simTelegramBot-main/alembic/versions/002_constraints.py:65-87)  
-**Severity:** HIGH  
-**Root Cause:** **Two separate migration systems exist**: (1) `db/migrations.py` with its own `MIGRATIONS` list and `_migrations` table, and (2) Alembic with standard `alembic_version` table. Both seed the same data (catalog_services, currencies, providers). Running both will cause duplicate key errors. The `db/migrations.py` system uses `INSERT ... ON CONFLICT DO NOTHING` (safe), but having two migration systems is an architectural smell.
-
-**Recommended Fix:** Choose ONE migration system. Disable `db/migrations.py` entirely and use Alembic exclusively.
-
----
-
-### H7 — `OrderService.mark_waiting_sms()` has bug that swallows state transition
-
-**File:** [`services/order_service.py`](5simTelegramBot-main/services/order_service.py:125)  
-**Severity:** HIGH  
-**Root Cause:** Lines 130-132 contain dead logic that overrides the order status back to CREATED before the transition check:
-
-```python
-def mark_waiting_sms(self, order_id: int) -> OrderDTO | None:
-    order = self.get_order(order_id)
-    if order is None:
-        return None
-    if order.status == OrderStatus.CREATED:
-        # Allow CREATED → WAITING_SMS for cases where purchase bypasses intermediate states
-        order.status = OrderStatus.CREATED  # BUG: Sets to same value, does nothing useful
-    self._require_transition(order.status, OrderStatus.WAITING_SMS, order_id)
-```
-
-The `CREATED → WAITING_SMS` transition is **not** in `STATE_TRANSITIONS` (line 24). This code will still raise a `ValueError` on the next line. **This is intentional dead code — commit comment says "Allow CREATED → WAITING_SMS" but does NOT add it to the transitions map.**
-
-**Recommended Fix:** Add the `CREATED → WAITING_SMS` transition to `STATE_TRANSITIONS` or remove the dead code block.
+1. **Fix C-3:** Rewrite tests to use PostgreSQL (pytest-postgresql)
+2. **Fix C-1:** Make SECRET_KEY mandatory, no fallback
+3. **Fix H-8:** Append CSRF state token to ZarinPal callback URL
+4. **Fix C-7:** Move admin API token from query string to Bearer header
+5. **Fix H-6:** Enforce webhook secret token in production
+6. **Fix C-5:** Synchronize wallet_ledger CHECK constraint across all 3 DDL sources
+7. **Fix H-1, H-2:** Add Redis password, remove Postgres default password
+8. **Fix C-4:** Return new_balance from PaymentService.verify_and_credit()
+9. **Fix M-10:** Implement find_by_id_like in UserRepository
+10. **Fix H-4:** Add rate limiting to broadcast function
+11. **Fix M-3, M-4:** Add LRU cache or TTL to in-memory caches
+12. **Fix C-6:** Consolidate payment.py into payment_service.py or delete
+13. **Fix M-8:** Add _migrations table to alembic or remove MigrationManager
+14. **Fix H-10:** Add file-based audit log as secondary record
+15. **Fix L-2, L-3, L-4:** Move orphan files to proper package locations
 
 ---
 
-### H8 — `ReferralService` uses `@staticmethod` DB calls via `db_context` import which fails if DB not initialized
-
-**File:** [`services/referral_service.py`](5simTelegramBot-main/services/referral_service.py:36-48)  
-**Severity:** HIGH  
-**Root Cause:** Multiple methods use `from db.context import db_context` inside method bodies (lines 36, 59, 84, 127, 142, 159, 183, 227, 246, 264). If any of these methods are called before the database connection pool is initialized (which happens at bot startup), they will crash. The import-inside-method pattern is fragile and indicates circular import concerns.
-
-**Recommended Fix:** Import `db_context` at the module level. The database connection pool is lazily initialized by `ConnectionManager.get_instance()`, so module-level imports are safe.
-
----
-
-### H9 — `payment.py` (legacy ZarinPal) duplicates logic from `services/payment_service.py`
-
-**File:** [`payment.py`](5simTelegramBot-main/payment.py) — ENTIRE FILE vs [`services/payment_service.py`](5simTelegramBot-main/services/payment_service.py:51-174)  
-**Severity:** HIGH  
-**Root Cause:** Both files implement ZarinPal payment creation and verification. `payment.py` is the old module, `services/payment_service.py` is the new enterprise version. The `web/routes/payment.py` uses `compat.legacy_facade.payment_verify_zarinpal`, which ultimately calls the new `PaymentService`. But `payment.py` is still imported and could be called from undiscovered paths.
-
-**Recommended Fix:** Deprecate `payment.py` entirely. All paths should go through `PaymentService` (new). Add a deprecation warning import guard.
-
----
-
-### H10 — `bot/handlers/help.py` and `bot/handlers/purchase.py` have DUPLICATE help menu implementations
-
-**File:** [`bot/handlers/help.py`](5simTelegramBot-main/bot/handlers/help.py:17-67) vs [`bot/handlers/purchase.py`](5simTelegramBot-main/bot/handlers/purchase.py:157-204)  
-**Severity:** HIGH  
-**Root Cause:** Two separate registrations for the same help callback handlers (`help`, `help_buy_number`, `help_charge`, etc.). `help.py` registers via `bot.callback_query_handler()` directly; `purchase.py` registers via `router.callback()`. Both will fire, causing double message edits and potential race conditions.
-
-**Recommended Fix:** Remove one of the duplicate implementations. The router-based approach in `purchase.py` is preferred. Delete the `bot.callback_query_handler()` registrations in `help.py`.
-
----
-
-## MEDIUM ISSUES
-
-### M1 — `db/schema.py` defines `wallet_ledger` and `rate_limits` tables but they're also defined in service files
-
-**File:** [`db/schema.py`](5simTelegramBot-main/db/schema.py:303-328) vs [`services/wallet_ledger.py`](5simTelegramBot-main/services/wallet_ledger.py:149-164) and [`services/rate_limiter.py`](5simTelegramBot-main/services/rate_limiter.py)  
-**Severity:** MEDIUM  
-**Root Cause:** DDL is duplicated. `wallet_ledger.py` has `WALLET_LEDGER_DDL` (lines 149-164) but the table is already in `db/schema.py`. If schema.py is always run first, this is harmless but confusing.
-
-**Recommended Fix:** Remove the `WALLET_LEDGER_DDL` constant from `services/wallet_ledger.py`. All DDL should live only in `db/schema.py` or Alembic migrations.
-
----
-
-### M2 — `alembic/versions/001_initial_schema.py` creates `alembic_version` table manually
-
-**File:** [`alembic/versions/001_initial_schema.py`](5simTelegramBot-main/alembic/versions/001_initial_schema.py:125-130)  
-**Severity:** MEDIUM  
-**Root Cause:** Alembic manages its own `alembic_version` table automatically via `context.configure(version_table='alembic_version')`. The migration manually creates it with `CREATE TABLE IF NOT EXISTS alembic_version`. This will cause Alembic to fail on the second run because the table already exists with a different schema than what Alembic expects.
-
-**Recommended Fix:** Remove the manual `alembic_version` table creation from the migration. Let Alembic manage its own version tracking table.
-
----
-
-### M3 — `config.py` `SECRET_KEY` defaults to `os.urandom(32).hex()` — breaks session persistence
-
-**File:** [`config.py`](5simTelegramBot-main/config.py:79)  
-**Severity:** MEDIUM  
-**Root Cause:** When `SECRET_KEY` is not set, a random key is generated via `os.urandom(32).hex()`. This means every process restart generates a new key, invalidating all existing Flask sessions and tokens. In a multi-worker setup (Gunicorn with multiple workers), each worker gets a different key, making session-based auth impossible.
-
-**Recommended Fix:** Remove the `os.urandom()` default. Make `SECRET_KEY` a required environment variable, or at minimum log a prominent warning when the default is used.
-
----
-
-### M4 — `bot.py` hardcodes `debug=False, use_reloader=False` — no dev-friendly overrides
-
-**File:** [`bot.py`](5simTelegramBot-main/bot.py:75)  
-**Severity:** MEDIUM  
-**Root Cause:** Flask is always started with `debug=False`, even when `FLASK_DEBUG=true` is set in the environment. The `FLASK_DEBUG` config variable is read (line 78) but never used to set `app.run(debug=...)`.
-
-**Recommended Fix:** Use `app.run(debug=FLASK_DEBUG, ...)` or check the config value in `__main__`.
-
----
-
-### M5 — `bot_utils.py` is unused — dead module
-
-**File:** [`bot_utils.py`](5simTelegramBot-main/bot_utils.py) — ENTIRE FILE  
-**Severity:** MEDIUM  
-**Root Cause:** `bot_utils.py` provides `send_message_to_bot()` using the raw Telegram HTTP API. However, the entire project now uses `bot.client.TelegramClient` for message sending via the pyTelegramBotAPI library. No file imports `bot_utils`. The module is loaded by `bot.py:5` (`import bot_utils`) but its `send_message_to_bot` function is **never called**.
-
-**Recommended Fix:** Remove `bot_utils.py` and its import from `bot.py`.
-
----
-
-### M6 — `currency_service.py` has unused method `_get_usd_to_irr_rate()` returning hardcoded `52000`
-
-**File:** [`currency_service.py`](5simTelegramBot-main/currency_service.py:49-58)  
-**Severity:** MEDIUM  
-**Root Cause:** The method `_get_usd_to_irr_rate()` returns a hardcoded `52000` and is never called by any other code. The actual USD rate is fetched via `get_usd_rate()` using the Navasan API. This is dead code.
-
-**Recommended Fix:** Remove `_get_usd_to_irr_rate()`.
-
----
-
-### M7 — `bot/handlers/menu.py` — entire file is a no-op stub
-
-**File:** [`bot/handlers/menu.py`](5simTelegramBot-main/bot/handlers/menu.py:1-18)  
-**Severity:** MEDIUM  
-**Root Cause:** The file's docstring explicitly states: *"This file exists only for backward compatibility."* The `init()` function just stores the bot instance but nothing uses it from this module. All menu handlers are in `purchase.py` and `services.py`.
-
-**Recommended Fix:** Remove `bot/handlers/menu.py` and its registration in `bot.py:27`.
-
----
-
-### M8 — `UserService.get_all_ids()` returns `[r['user_id'] for r in rows]` but rows are tuples, not dicts
-
-**File:** [`services/user_service.py`](5simTelegramBot-main/services/user_service.py:79-82)  
-**Severity:** MEDIUM  
-**Root Cause:** `self._user_repo.get_all_ids()` returns rows from `_execute_read()` which calls `db.fetchall()`. With psycopg2, `fetchall()` returns **tuples**, not dicts (unless using RealDictCursor). Accessing `r['user_id']` will raise `TypeError: tuple indices must be integers or slices, not str`.
-
-This will crash the **admin broadcast** feature hard.
-
-**Recommended Fix:** Change to `[r[0] for r in rows]` or configure `RealDictCursor` in the connection pool.
-
----
-
-### M9 — `db/migrations.py` uses `?` placeholders in raw SQL but doesn't convert them
-
-**File:** [`db/migrations.py`](5simTelegramBot-main/db/migrations.py:94)  
-**Severity:** MEDIUM  
-**Root Cause:** Line 94: `INSERT INTO _migrations VALUES (%s, %s, %s, %s)` uses correct `%s` syntax. However, lines 17-18 build INSERT statements with `?` for `DEFAULT_SETTINGS` seeding. Unlike `ConnectionManager.execute()` which auto-replaces `?` with `%s`, the MigrationManager gets raw connections and executes directly. These statements will fail.
-
-```python
-# Line 17: Uses Python string formatting with '?' — SQLite syntax in PG
-f"INSERT INTO settings (key, value) VALUES ('{k}', '{v}') ON CONFLICT (key) DO NOTHING"
-```
-
-**Recommended Fix:** This is actually safe because it uses f-string interpolation (values are embedded, not parametrized). But it's a SQL injection risk if any setting value contains `'`. Use parameterized queries with `%s`.
-
----
-
-### M10 — `ProviderRegistry` has a race condition on singleton initialization
-
-**File:** [`services/provider_registry.py`](5simTelegramBot-main/services/provider_registry.py:58-62)  
-**Severity:** MEDIUM  
-**Root Cause:** The `get_instance()` classmethod checks `cls._instance is None` without a lock, then assigns `cls._instance = cls()`. In a multi-threaded environment (Flask with multiple workers), this can create multiple `ProviderRegistry` instances, each with independent provider state.
-
-**Recommended Fix:** Use double-checked locking or a thread-safe singleton pattern (e.g., `threading.Lock()`).
-
----
-
-### M11 — `bot/router.py` has a closure bug in `register_with_bot()`
-
-**File:** [`bot/router.py`](5simTelegramBot-main/bot/router.py:74-86)  
-**Severity:** MEDIUM  
-**Root Cause:** The `register_with_bot()` method creates closures inside loops. While the code uses `h=handler` default argument trick to avoid the classic Python closure bug, the lambda for callback queries uses `p=pattern` correctly, but the `_callback_wrapper` and `_message_wrapper` will cause `pyTelegramBotAPI` to register ALL handlers under the LAST pattern/command because of how telebot's `@bot.callback_query_handler` decorator works. The telebot library doesn't support multiple decorators with the same function — each `@bot.message_handler` replaces the previous one.
-
-**Recommended Fix:** Instead of using `@bot.callback_query_handler` decorators in a loop, use `bot.add_callback_query_handler()` or `bot.register_message_handler()` methods which accept handler functions directly.
-
----
-
-### M12 — `web/routes/admin_panel.py` uses Flask `session` without setting `SECRET_KEY`
-
-**File:** [`web/routes/admin_panel.py`](5simTelegramBot-main/web/routes/admin_panel.py:9)  
-**Severity:** MEDIUM  
-**Root Cause:** Lines 20-23 use `session.get('admin_token')` and `session['admin_token'] = token`. Flask sessions require a properly configured `SECRET_KEY` (not randomly generated at startup — see M3). If `SECRET_KEY` changes between requests, sessions break.
-
-**Recommended Fix:** Ensure `SECRET_KEY` is explicitly set in `.env` and validated at startup.
-
----
-
-## LOW ISSUES
-
-### L1 — `startup_test.py` hardcodes an absolute Windows path
-
-**File:** [`startup_test.py`](5simTelegramBot-main/startup_test.py:4)  
-**Severity:** LOW  
-**Root Cause:** `os.chdir(r'c:\Users\MC\Downloads\5simTelegramBot-main\5simTelegramBot-main')` — this is a hardcoded absolute path that only works on one machine. The script is unusable in Docker, CI/CD, or on any other developer's machine.
-
-**Recommended Fix:** Use `os.path.dirname(os.path.abspath(__file__))` to derive the project root dynamically.
-
----
-
-### L2 — `admin_config.py` comment says "No direct sqlite3 connections" but uses literal `sqlite3` in its docstring
-
-**File:** [`admin_config.py`](5simTelegramBot-main/admin_config.py:5)  
-**Severity:** LOW  
-**Root Cause:** Line 5: *"No direct sqlite3 connections."* — This is documentation, not code. However, the file correctly delegates to `SettingsRepository`. No functional issue.
-
-**Recommended Fix:** Remove outdated mention of sqlite3 from docstring.
-
----
-
-### L3 — `SERVICE_CODE_MAP` in [`config.py`](5simTelegramBot-main/config.py:106) only has 4 entries
-
-**File:** [`config.py`](5simTelegramBot-main/config.py:106-109)  
-**Severity:** LOW  
-**Root Cause:** The code-to-provider-code mapping only covers `telegram`, `whatsapp`, `instagram`, `google`. Alembic migration 002 seeds 15 services including `facebook`, `tiktok`, `discord`, etc. These additional services have no service code mapping and will pass through un-mapped, potentially causing API call failures.
-
-**Recommended Fix:** Add mappings for all seeded services or implement a database-backed service code mapping.
-
----
-
-### L4 — `COUNTRY_ID_MAP` in [`config.py`](5simTelegramBot-main/config.py:96) missing `dominican_republic`
-
-**File:** [`config.py`](5simTelegramBot-main/config.py:96-104)  
-**Severity:** LOW  
-**Root Cause:** `dominican_republic` appears in `service_countries.py` for WhatsApp service but has no ID (`82`) in `COUNTRY_ID_MAP`. It IS in the map at line 101. False report — it IS present. However, `indonesia` at line 97 has ID `6` which may not be a HeroSMS country ID. Verification needed.
-
-**Recommended Fix:** Verify all country IDs against HeroSMS documentation.
-
----
-
-### L5 — `bot/handlers/admin/` directory has 7 handler files but most are unused
-
-**Files:** [`bot/handlers/admin/broadcast.py`](5simTelegramBot-main/bot/handlers/admin/broadcast.py), [`bot/handlers/admin/channels.py`](5simTelegramBot-main/bot/handlers/admin/channels.py), [`bot/handlers/admin/operators.py`](5simTelegramBot-main/bot/handlers/admin/operators.py), [`bot/handlers/admin/settings.py`](5simTelegramBot-main/bot/handlers/admin/settings.py), [`bot/handlers/admin/stats.py`](5simTelegramBot-main/bot/handlers/admin/stats.py), [`bot/handlers/admin/transactions.py`](5simTelegramBot-main/bot/handlers/admin/transactions.py)  
-**Severity:** LOW  
-**Root Cause:** These files exist in the directory but are **not imported** in `admin_bot.py` or `bot/handlers/admin_bot.py`. Only `bot/handlers/admin/dashboard.py` and `bot/handlers/admin/users.py` appear to be in use. The other modules represent either planned features or dead code.
-
-**Recommended Fix:** Either wire them into the bot or remove them. Document the status in a README if they're placeholders.
-
----
-
-## ARCHITECTURE ASSESSMENT
-
-### Positive Findings
-1. **Repository Pattern** — All data access flows through `db/repositories/` layer with consistent interfaces
-2. **Service Layer Abstraction** — Business logic is properly separated from Telegram handlers in `services/`
-3. **DTO Pattern** — Well-typed dataclasses in `data/dto.py` replace raw dicts
-4. **Row-Locking** — `SELECT ... FOR UPDATE` used consistently for atomic balance operations
-5. **Idempotency** — Payment verification checks for duplicate authority before crediting
-6. **Audit Trail** — Admin actions are logged via `AuditService`
-7. **RBAC** — Role-based access control with 6 roles and granular permissions
-8. **Middleware Pipeline** — Pre-handler processing for auth, language, logging
-9. **Feature Flags** — `MIGRATION_FLAGS` for gradual rollout
-10. **Security-Hardened Config** — Secrets from environment only, no hardcoded keys
-11. **Dual Database Strategy** — `db/schema.py` + Alembic for schema management
-
-### Architecture Weaknesses
-1. **Two Migration Systems** — `db/migrations.py` AND Alembic run simultaneously
-2. **Inconsistent Cursor Return Types** — Some code expects tuples, some expects dicts
-3. **Untestable Singleton Patterns** — `ConnectionManager`, `ProviderRegistry`, `CacheService` all use singletons without dependency injection
-4. **Mixed Import Styles** — Some modules import dependencies at top-level, others inside functions (indicating circular dependency workarounds)
-5. **File Existence Gaps** — 4 files are referenced but don't exist on disk
-
-### Dependency Graph Issues
-- Several service modules import `db_context` inside method bodies to avoid circular imports, indicating tight coupling between the service and data layers
-- `compat/legacy_facade.py` creates all service instances at module level — any import error in a service will crash the compat layer and all its callers
-
----
-
-## RECOMMENDED ACTION PLAN
-
-| Priority | Issue | Action |
-|----------|-------|--------|
-| 1 | C1 — Missing celery/tasks files | Create `tasks/celery_app.py`, `tasks/__init__.py` |
-| 2 | C2 — Double put_connection | Refactor ConnectionManager.execute() |
-| 3 | C3 — Webhook security | Add secret token verification |
-| 4 | C5 — SQLite ? in PG query | Fix admin_api.py test_purchase_number |
-| 5 | H3 — Missing find_by_id_like | Implement in UserRepository |
-| 6 | H8 — import-in-function | Hoist db_context imports to module level |
-| 7 | M8 — Dict access on tuples | Convert rows to dicts or use integer indices |
-| 8 | M11 — Router closure bug | Use proper telebot handler registration API |
-| 9 | H10 — Duplicate help handlers | Remove duplicate registration |
-| 10 | M7 — Dead menu.py | Remove bot/handlers/menu.py |
-
----
-
-**Audit Complete.** 73 files fully analyzed. 32 issues cataloged. Proceed to Phase B — Static Analysis.
+*End of Phase A — Code Audit Report*
