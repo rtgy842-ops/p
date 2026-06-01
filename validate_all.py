@@ -125,7 +125,8 @@ print("\n" + "=" * 80)
 print("TASKS/CELERY CHECKS")
 print("=" * 80)
 try:
-    from tasks import app as celery_app
+    import importlib as _il
+    celery_app = _il.import_module('tasks').app
     print(f"   ✅ tasks.Celery app imported: {celery_app}")
     print(f"   ✅ Beat schedule: {len(celery_app.conf.beat_schedule)} tasks configured")
     for name, config in celery_app.conf.beat_schedule.items():

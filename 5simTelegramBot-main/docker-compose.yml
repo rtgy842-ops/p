@@ -110,6 +110,8 @@ services:
     container_name: smsbot-worker
     entrypoint: ["./docker-entrypoint.sh"]
     command: ["celery", "-A", "tasks", "worker", "--loglevel=info", "--concurrency=2"]
+    healthcheck:
+      disable: true
     depends_on:
       redis:
         condition: service_healthy
@@ -127,6 +129,8 @@ services:
     container_name: smsbot-beat
     entrypoint: ["./docker-entrypoint.sh"]
     command: ["celery", "-A", "tasks", "beat", "--loglevel=info"]
+    healthcheck:
+      disable: true
     depends_on:
       redis:
         condition: service_healthy

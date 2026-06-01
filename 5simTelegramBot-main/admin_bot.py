@@ -53,12 +53,7 @@ def link():
     return f'<a href="{w}/admin?token={t}">🔗 Admin Panel</a>' if t else 'Not configured'
 
 if __name__ == '__main__':
-    from database import setup_databases
-    setup_databases()
-    logger.info("DB ready")
-    from db.migrations import MigrationManager
-    MigrationManager().migrate()
-    logger.info("Migrations done")
+    # Schema managed by Alembic (docker-entrypoint runs alembic upgrade head)
     from services.provider_registry import provider_registry
     from services.sms_service import HeroSMSProvider
     provider_registry.register(HeroSMSProvider(), 'HeroSMS', priority=1)

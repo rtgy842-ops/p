@@ -100,12 +100,7 @@ def verify_payment(user_id, amount):
         return render_template('payment_result.html', False, message="Internal error")
 
 if __name__ == '__main__':
-    from database import setup_databases
-    setup_databases()
-    logger.info("DB ready")
-    from db.migrations import MigrationManager
-    MigrationManager().migrate()
-    logger.info("Migrations done")
+    # Schema is managed by Alembic (alembic upgrade head). No duplicate setup.
     from services.provider_registry import provider_registry
     from services.sms_service import HeroSMSProvider
     provider_registry.register(HeroSMSProvider(), 'HeroSMS', priority=1)
