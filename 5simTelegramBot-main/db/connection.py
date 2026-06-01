@@ -47,14 +47,34 @@ class ConnectionManager:
         return self._pool.getconn()
 
     def put_connection(self, conn):
-        """Return a connection to the pool."""
+        """Return a connection to the pool.
+
+        CRITICAL: Always roll back any open/aborted transaction before
+        returning the connection to the pool. Otherwise the next consumer
+        inherits an in-progress or aborted transaction, producing
+        "there is already a transaction in progress" or
+        "current transaction is aborted" errors.
+        """
+        if conn is None:
+            return
+        try:
+            # Reset transaction state so the connection is clean for reuse.
+            if not getattr(conn, 'closed', False):
+                conn.rollback()
+        except Exception as e:
+            logger.warning(f"Error resetting connection before return: {e}")
         try:
             self._pool.putconn(conn)
         except Exception as e:
             logger.warning(f"Error returning connection to pool: {e}")
 
     def execute(self, db_name: str, query: str, params: tuple = ()):
-        """Execute a query with logging. Thread-safe via pool."""
+        """Execute a read query and return all rows. Thread-safe via pool.
+
+        The connection is committed (to end the implicit read transaction)
+        and returned to the pool immediately. Returns a list of rows so the
+        caller never holds a dead cursor or a leaked connection.
+        """
         import time
         start = time.time()
         conn = self.get_connection(db_name)
@@ -67,11 +87,16 @@ class ConnectionManager:
             self._query_count += 1
             if elapsed > self._slow_query_threshold:
                 logger.warning(f"SLOW QUERY [{elapsed:.3f}s]: {query[:100]}")
-            return cursor
+            rows = []
+            if cursor.description is not None:
+                rows = cursor.fetchall()
+            conn.commit()
+            return rows
         except Exception as e:
             logger.error(f"DB error: {e}\nQuery: {query}\nParams: {params}")
             raise
         finally:
+            cursor.close()
             self.put_connection(conn)
 
     def execute_and_commit(self, db_name: str, query: str, params: tuple = ()):

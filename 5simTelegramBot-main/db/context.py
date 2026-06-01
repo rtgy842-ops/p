@@ -22,32 +22,45 @@ class DatabaseContext:
 
     def __enter__(self):
         self._conn = self._cm.get_connection(self._db_name)
+        # psycopg2 starts a transaction implicitly on the first statement.
+        # Issuing an explicit BEGIN here would raise
+        # "there is already a transaction in progress". Rely on the implicit
+        # transaction and commit/rollback in __exit__ instead.
         self._cursor = self._conn.cursor()
-        if self._transactional:
-            self._cursor.execute('BEGIN')
-            logger.debug("Transaction BEGIN")
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        if exc_type is not None:
-            if self._transactional:
+        try:
+            if exc_type is not None:
                 try:
                     self._conn.rollback()
                     logger.warning(f"Transaction ROLLBACK due to: {exc_type.__name__}: {exc_val}")
                 except Exception as e:
                     logger.error(f"Rollback error: {e}")
-            self._cm.put_connection(self._conn)
-            return False
-        else:
-            if self._transactional:
+                return False
+            else:
                 try:
                     self._conn.commit()
                     logger.debug("Transaction COMMIT")
                 except Exception as e:
                     logger.error(f"Commit error: {e}")
+                    # Ensure the connection is rolled back so it is not
+                    # returned to the pool in an aborted state.
+                    try:
+                        self._conn.rollback()
+                    except Exception:
+                        pass
                     raise
+                return True
+        finally:
+            if self._cursor is not None:
+                try:
+                    self._cursor.close()
+                except Exception:
+                    pass
+            # put_connection performs a rollback() to guarantee the pooled
+            # connection is reset to a clean, non-aborted state.
             self._cm.put_connection(self._conn)
-            return True
 
     def execute(self, query: str, params: tuple = ()):
         query = query.replace('?', '%s')

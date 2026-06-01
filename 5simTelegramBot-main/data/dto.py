@@ -12,6 +12,29 @@ from enum import Enum
 from typing import Optional
 
 
+def _row_to_mapping(row, columns: list[str]) -> dict:
+    """Normalize a DB row to a dict.
+
+    Repositories use psycopg2's default cursor which returns plain tuples,
+    but several DTO.from_row() methods were written assuming dict-like rows
+    (row['col'] / row.get('col')). This helper bridges both:
+      - dict / RealDictRow → returned as-is (copied to plain dict)
+      - tuple / list / sqlite3.Row → zipped against the provided column order
+    """
+    if row is None:
+        return {}
+    # Dict-like (psycopg2 RealDictRow, sqlite3.Row supports keys(), plain dict)
+    if hasattr(row, 'keys') and not isinstance(row, (tuple, list)):
+        try:
+            return {k: row[k] for k in row.keys()}
+        except Exception:
+            pass
+    if isinstance(row, dict):
+        return dict(row)
+    # Sequence (tuple/list) → map by known column order
+    return {columns[i]: row[i] for i in range(min(len(columns), len(row)))}
+
+
 # ── Order State Machine ────────────────────────────────────────
 class OrderStatus(str, Enum):
     """Unified order status — the SINGLE source of truth."""
@@ -52,20 +75,25 @@ class UserDTO:
     is_blocked: bool = False
     join_date: Optional[str] = None
 
+    # Canonical column order produced by UserRepository.find_by_id()
+    _COLUMNS = ['user_id', 'username', 'first_name', 'last_name',
+                'balance', 'is_blocked', 'language', 'join_date']
+
     @classmethod
     def from_row(cls, row) -> 'UserDTO':
-        """Create from sqlite3.Row or dict."""
+        """Create from a psycopg2 tuple, dict, or sqlite3.Row."""
         if row is None:
             return None
+        d = _row_to_mapping(row, cls._COLUMNS)
         return cls(
-            user_id=row['user_id'],
-            balance=row.get('balance', 0),
-            username=row.get('username'),
-            first_name=row.get('first_name'),
-            last_name=row.get('last_name'),
-            language=row.get('language', 'fa'),
-            is_blocked=bool(row.get('is_blocked', 0)),
-            join_date=row.get('join_date'),
+            user_id=d['user_id'],
+            balance=d.get('balance', 0) or 0,
+            username=d.get('username'),
+            first_name=d.get('first_name'),
+            last_name=d.get('last_name'),
+            language=d.get('language', 'fa') or 'fa',
+            is_blocked=bool(d.get('is_blocked', 0)),
+            join_date=d.get('join_date'),
         )
 
 
@@ -83,26 +111,31 @@ class OrderDTO:
     status: OrderStatus = OrderStatus.CREATED
     created_at: Optional[str] = None
 
+    # Canonical column order produced by OrderRepository.find_by_id()
+    _COLUMNS = ['id', 'user_id', 'activation_id', 'service', 'country',
+                'operator', 'phone', 'price', 'status', 'created_at']
+
     @classmethod
     def from_row(cls, row) -> 'OrderDTO':
         if row is None:
             return None
-        status_raw = row.get('status', 'CREATED') or 'CREATED'
+        d = _row_to_mapping(row, cls._COLUMNS)
+        status_raw = d.get('status', 'CREATED') or 'CREATED'
         try:
-            status = OrderStatus(status_raw.upper())
+            status = OrderStatus(str(status_raw).upper())
         except ValueError:
             status = OrderStatus.CREATED
         return cls(
-            id=row.get('id'),
-            user_id=row.get('user_id', 0),
-            activation_id=row.get('activation_id'),
-            service=row.get('service', ''),
-            country=row.get('country', ''),
-            operator=row.get('operator', ''),
-            phone=row.get('phone', ''),
-            price=row.get('price', 0),
+            id=d.get('id'),
+            user_id=d.get('user_id', 0) or 0,
+            activation_id=d.get('activation_id'),
+            service=d.get('service', '') or '',
+            country=d.get('country', '') or '',
+            operator=d.get('operator', '') or '',
+            phone=d.get('phone', '') or '',
+            price=d.get('price', 0) or 0,
             status=status,
-            created_at=row.get('created_at'),
+            created_at=d.get('created_at'),
         )
 
 

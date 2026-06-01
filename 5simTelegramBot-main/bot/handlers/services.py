@@ -13,7 +13,7 @@ from telebot import types
 
 from bot.client import telegram_client
 from bot.keyboards.main_keyboard import countries_keyboard, services_keyboard
-from data.service_countries import _get_countries_for_service
+from data.service_countries import get_countries_for_service
 from i18n import get_text
 from services.settings_service import SettingsService
 from services.sms_service import SMSService
@@ -46,7 +46,7 @@ def register_service_handlers(bot):
         service = call.data.split('_')[1]
 
         # Get countries from single source of truth
-        countries = _get_countries_for_service(service)
+        countries = get_countries_for_service(service)
 
         if not countries:
             telegram_client.answer_callback(call, get_text(user_id, 'services.error_fetch'))

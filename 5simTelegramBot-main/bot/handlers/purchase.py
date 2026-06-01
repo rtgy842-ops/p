@@ -126,6 +126,98 @@ def handle_buy_number_entry(call):
         reply_markup=services_keyboard(call.from_user.id))
 
 
+# ── back_to_main (return to main menu) ─────────────────────
+@router.callback('back_to_main')
+def handle_back_to_main(call):
+    """Return the user to the main menu. Used by many sub-screens."""
+    from bot.keyboards.main_keyboard import main_menu_keyboard
+    try:
+        user_id = call.from_user.id
+        _bot.edit_message_text(
+            get_text(user_id, 'welcome_back'),
+            call.message.chat.id, call.message.message_id,
+            reply_markup=main_menu_keyboard(user_id))
+    except Exception as e:
+        logger.error(f"Error in back_to_main: {e}", exc_info=True)
+        _bot.answer_callback_query(call.id, get_text(call.from_user.id, 'errors.general_short'))
+
+
+# ── service_<service> (service selected → show countries) ──
+@router.callback('service_')
+def handle_service_selection(call):
+    """Show available countries for the selected service."""
+    from bot.keyboards.main_keyboard import countries_keyboard
+    from data.service_countries import get_countries_for_service
+    try:
+        user_id = call.from_user.id
+        service = call.data.split('_', 1)[1]
+        countries = get_countries_for_service(service)
+        if not countries:
+            _bot.answer_callback_query(call.id, get_text(user_id, 'services.error_fetch'))
+            return
+        _bot.edit_message_text(
+            get_text(user_id, 'countries.select', service=service),
+            call.message.chat.id, call.message.message_id,
+            reply_markup=countries_keyboard(user_id, service, countries))
+    except Exception as e:
+        logger.error(f"Error in service_selection: {e}", exc_info=True)
+        _bot.answer_callback_query(call.id, get_text(call.from_user.id, 'errors.general_short'))
+
+
+# ── country_<service>_<country> (country selected → price + buy) ──
+@router.callback('country_')
+def handle_country_selection(call):
+    """Show price/availability for service+country and the buy button."""
+    from telebot import types
+
+    from operator_config import OperatorConfig
+    from services.sms_service import SMSService
+    try:
+        user_id = call.from_user.id
+        parts = call.data.split('_')
+        # callback format: country_<service>_<country> (country may contain underscores)
+        service = parts[1]
+        country = '_'.join(parts[2:]) if len(parts) > 3 else parts[2]
+
+        op_config = OperatorConfig()
+        operator, country_name = op_config.get_operator_info(service, country)
+        if not country_name:
+            country_name = get_text(user_id, f'countries.{country}')
+        if not operator:
+            operator = 'virtual4'
+
+        price_info = SMSService().get_price_info(service, country)
+
+        keyboard = types.InlineKeyboardMarkup(row_width=2)
+        if price_info and price_info.available_count > 0:
+            keyboard.add(types.InlineKeyboardButton(
+                get_text(user_id, 'purchase.buy_button', operator=price_info.operator),
+                callback_data=f"buy_number_{service}_{country}_{price_info.operator}"))
+        else:
+            keyboard.add(types.InlineKeyboardButton(
+                get_text(user_id, 'purchase.unavailable'),
+                callback_data="no_operator"))
+        keyboard.add(types.InlineKeyboardButton(
+            get_text(user_id, 'navigation.back_to_services'),
+            callback_data="back_to_services"))
+
+        message_text = get_text(user_id, 'countries.selected',
+                                country=country_name, service=service)
+        if price_info:
+            message_text += "\n\n" + get_text(
+                user_id, 'purchase.price_line',
+                price=price_info.price_toman,
+                count=price_info.available_count,
+                operator=price_info.operator)
+        message_text += f"\n\n{get_text(user_id, 'purchase.buy_prompt')}"
+
+        _bot.edit_message_text(message_text, call.message.chat.id,
+                               call.message.message_id, reply_markup=keyboard)
+    except Exception as e:
+        logger.error(f"Error in country_selection: {e}", exc_info=True)
+        _bot.answer_callback_query(call.id, get_text(call.from_user.id, 'errors.general_short'))
+
+
 # ── check_balance ─────────────────────────────────────────
 @router.callback('check_balance')
 def handle_check_balance(call):

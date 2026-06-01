@@ -62,10 +62,9 @@ class MigrationManager:
 
     def get_current_version(self) -> int:
         try:
-            cursor = self._cm.execute('default',
+            rows = self._cm.execute('default',
                 "SELECT MAX(version) FROM _migrations WHERE success = 1")
-            row = cursor.fetchone()
-            self._cm.put_connection(cursor.connection)
+            row = rows[0] if rows else None
             return row[0] if row and row[0] is not None else -1
         except Exception:
             return -1

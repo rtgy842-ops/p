@@ -36,14 +36,22 @@ services:
     container_name: smsbot-redis
     volumes:
       - redis_data:/data
-    command: >
-      redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
-      --save 900 1 --save 300 10 --save 60 10000
-      --requirepass ${REDIS_PASSWORD:-}
+    # Use sh -c so REDIS_PASSWORD is only passed to --requirepass when set.
+    # Passing an empty --requirepass arg crashes redis with
+    # "wrong number of arguments". REDIS_PASSWORD is read from .env / environment.
+    command:
+      - sh
+      - -c
+      - >
+        redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+        --save 900 1 --save 300 10 --save 60 10000
+        ${REDIS_PASSWORD:+--requirepass "$REDIS_PASSWORD"}
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     networks:
       - internal
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli ${REDIS_PASSWORD:+-a \"$REDIS_PASSWORD\"} ping | grep -q PONG"]
       interval: 10s
       timeout: 3s
       retries: 3
