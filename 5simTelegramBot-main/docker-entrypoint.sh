@@ -36,9 +36,15 @@ except Exception:
   sleep 2
 done
 
-# Run Alembic migrations (idempotent — safe to re-run)
-echo "Running database migrations..."
-python3 -m alembic upgrade head 2>/dev/null || echo "⚠️  Alembic migration skipped (may already be up to date)"
+# Run Alembic migrations — ONLY from customer_bot (prevents race condition from 4 simultaneous containers)
+if [ -n "$BOT_TOKEN" ] && [ -z "$SKIP_ALEMBIC" ]; then
+  echo "Running alembic upgrade head (customer_bot only)..."
+  for i in $(seq 1 5); do
+    python3 -m alembic upgrade head 2>/dev/null && echo "Alembic OK" && break
+    echo "Alembic attempt $i failed, retrying in 2s..."
+    sleep 2
+  done
+fi
 
 echo "Starting: $@"
 exec "$@"

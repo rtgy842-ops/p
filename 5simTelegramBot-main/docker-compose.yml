@@ -85,6 +85,7 @@ services:
     command: ["python", "admin_bot.py"]
     environment:
       BOT_TOKEN: ${ADMIN_BOT_TOKEN}
+      SKIP_ALEMBIC: "true"
     ports:
       - "5002:5000"
     depends_on:
@@ -109,6 +110,8 @@ services:
       target: production
     container_name: smsbot-worker
     entrypoint: ["./docker-entrypoint.sh"]
+    environment:
+      SKIP_ALEMBIC: "true"
     command: ["celery", "-A", "tasks", "worker", "--loglevel=info", "--concurrency=2"]
     healthcheck:
       disable: true
@@ -128,6 +131,8 @@ services:
       target: production
     container_name: smsbot-beat
     entrypoint: ["./docker-entrypoint.sh"]
+    environment:
+      SKIP_ALEMBIC: "true"
     command: ["celery", "-A", "tasks", "beat", "--loglevel=info"]
     healthcheck:
       disable: true
